@@ -75,18 +75,32 @@ jobs:
           dotnet vpk pack --packId ${{ env.PACK_ID }} --packVersion ${{ steps.version.outputs.value }}
           --packDir publish --mainExe FontA.App.exe --packTitle FontA --icon assets/fonta.ico
 
-      - name: Publish the GitHub release
+      # This repository uses GitHub's immutable releases: once a release is published, nothing can be added to it or
+      # changed. So everything is attached to a DRAFT first, and the release is only published as the very last step.
+      - name: Upload the release as a draft
         run: >
           dotnet vpk upload github --repoUrl ${{ env.REPO_URL }} --token $env:GH_TOKEN
-          --publish --releaseName "FontA ${{ steps.version.outputs.value }}" --tag $env:REF_NAME
+          --releaseName "FontA ${{ steps.version.outputs.value }}" --tag $env:REF_NAME
 
       # Checksums let anyone confirm the installer they downloaded is the one this workflow built.
-      - name: Attach SHA-256 checksums
+      - name: Attach SHA-256 checksums to the draft
         shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
         run: |
+          $pattern = 'Setup\.exe$|Portable\.zip$|-' + [regex]::Escape($env:VERSION) + '-(full|delta)\.nupkg$'
           $lines = Get-ChildItem Releases -File |
-            Where-Object { $_.Name -match 'Setup\.exe$|Portable\.zip$|\.nupkg$' } |
+            Where-Object { $_.Name -match $pattern } |
+            Sort-Object Name |
             ForEach-Object { "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name }
+          if (-not $lines) { throw "No release files found to checksum." }
           $lines | Set-Content Releases/SHA256SUMS.txt -Encoding ascii
           $lines
           gh release upload $env:REF_NAME Releases/SHA256SUMS.txt --repo $env:GITHUB_REPOSITORY --clobber
+          if ($LASTEXITCODE -ne 0) { throw "Could not attach the checksums to the draft release." }
+
+      - name: Publish the release
+        shell: pwsh
+        run: |
+          gh release edit $env:REF_NAME --repo $env:GITHUB_REPOSITORY --draft=false --latest
+          if ($LASTEXITCODE -ne 0) { throw "Could not publish the release." }

@@ -214,6 +214,10 @@ repository) to publish.
 - **Your library is safe.** The installed app lives in `%LOCALAPPDATA%\FontAApp`; your library and settings stay in
   `%LOCALAPPDATA%\FontA`. They are deliberately different folders: uninstalling deletes the app folder, and it must
   never contain your data. (This is why the package ID is `FontAApp`, not `FontA`.)
+- **Releases are immutable.** This repository has GitHub's *immutable releases* turned on, so once a release is
+  published its files can't be added to, changed or replaced, by anyone. The workflow therefore uploads everything
+  (including `SHA256SUMS.txt`) to a draft and publishes it last. If a published release has a mistake, fix it with a
+  new version rather than editing it.
 - **Quitting installs the update.** Closing the window does not, if *Hide to tray on close* is on, because FontA is
   still running. Use **Restart now** on the banner, or **Quit FontA** in the tray menu.
 - **Start on system start keeps working** after updates: it points at the app's stable `current` folder, and is

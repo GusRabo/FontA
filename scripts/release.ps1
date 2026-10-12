@@ -44,9 +44,27 @@ dotnet vpk pack --packId $packId --packVersion $Version --packDir publish --main
 if ($LASTEXITCODE) { throw "vpk pack failed" }
 
 if ($Upload) {
-    dotnet vpk upload github --repoUrl $Repo --token $Token --publish --releaseName "FontA $Version" --tag "v$Version"
+    # This repository uses immutable releases: nothing can be added once a release is published. So upload as a draft,
+    # attach the checksums, then publish (the same order the GitHub workflow uses).
+    dotnet vpk upload github --repoUrl $Repo --token $Token --releaseName "FontA $Version" --tag "v$Version"
     if ($LASTEXITCODE) { throw "vpk upload failed" }
-    "Published FontA $Version to $Repo"
+
+    $pattern = 'Setup\.exe$|Portable\.zip$|-' + [regex]::Escape($Version) + '-(full|delta)\.nupkg$'
+    $lines = Get-ChildItem releases -File | Where-Object { $_.Name -match $pattern } | Sort-Object Name |
+        ForEach-Object { "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name }
+    $lines | Set-Content releases/SHA256SUMS.txt -Encoding ascii
+
+    if (Get-Command gh -ErrorAction SilentlyContinue) {
+        $env:GH_TOKEN = $Token
+        $repoName = ($Repo -replace '^https://github.com/', '')
+        gh release upload "v$Version" releases/SHA256SUMS.txt --repo $repoName --clobber
+        if ($LASTEXITCODE) { throw "Could not attach the checksums." }
+        gh release edit "v$Version" --repo $repoName --draft=false --latest
+        if ($LASTEXITCODE) { throw "Could not publish the release." }
+        "Published FontA $Version to $Repo"
+    } else {
+        "Uploaded FontA $Version to $Repo as a DRAFT. The GitHub CLI (gh) isn't installed, so: attach releases\SHA256SUMS.txt to the draft on GitHub, then publish it."
+    }
 } else {
     "Packed FontA $Version into releases\ (not uploaded). Add -Upload to publish it."
 }
