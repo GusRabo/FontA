@@ -10,6 +10,8 @@
     <Platforms>x64</Platforms>
     <AppendPlatformToOutputPath>false</AppendPlatformToOutputPath>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <!-- Ship the .NET runtime with the app so users install nothing. Set here, not on the command line, so a plain restore fetches the runtime pack. -->
+    <SelfContained>true</SelfContained>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <EnableMsixTooling>true</EnableMsixTooling>

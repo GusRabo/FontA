@@ -58,9 +58,9 @@ jobs:
       - name: Test
         run: dotnet test tests/FontA.Tests --configuration Release --no-restore
 
-      - name: Publish the app (self-contained, so users need no .NET or Windows App SDK install)
+      - name: Publish the app (self-contained by project setting, so users need no .NET or Windows App SDK install)
         run: >
-          dotnet publish src/FontA.App -c Release -r win-x64 -p:Platform=x64 -p:SelfContained=true --no-restore
+          dotnet publish src/FontA.App -c Release -p:Platform=x64 --no-restore
           -p:Version=${{ steps.version.outputs.value }} -p:UpdateRepoUrl=${{ env.REPO_URL }}
           -o publish
 

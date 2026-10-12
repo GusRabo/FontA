@@ -32,7 +32,7 @@ dotnet test tests/FontA.Tests --configuration Release
 if ($LASTEXITCODE) { throw "Tests failed; not releasing." }
 
 Remove-Item publish -Recurse -Force -ErrorAction SilentlyContinue
-dotnet publish src/FontA.App -c Release -r win-x64 -p:Platform=x64 -p:SelfContained=true "-p:Version=$Version" "-p:UpdateRepoUrl=$Repo" -o publish
+dotnet publish src/FontA.App -c Release -p:Platform=x64 "-p:Version=$Version" "-p:UpdateRepoUrl=$Repo" -o publish
 if ($LASTEXITCODE) { throw "dotnet publish failed" }
 
 if ($Upload) {
