@@ -1,0 +1,50 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{4B3E3808-FEB7-4F91-8E04-0704DC6FFB2B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FontA.Core", "src\FontA.Core\FontA.Core.csproj", "{EA29E6B1-D730-4190-8863-3217C306E880}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FontA.Rendering", "src\FontA.Rendering\FontA.Rendering.csproj", "{86FC11CE-55A9-4A64-ACE2-628CA7EA8684}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FontA.App", "src\FontA.App\FontA.App.csproj", "{B4B6AED8-5EAD-4A16-AD4C-30D6CCE01F51}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{6628BCD8-5FFA-44F8-ADBD-8EB9039787ED}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FontA.Tests", "tests\FontA.Tests\FontA.Tests.csproj", "{1F499462-552B-4503-960C-55A3D624D9D4}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{EA29E6B1-D730-4190-8863-3217C306E880}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{EA29E6B1-D730-4190-8863-3217C306E880}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{EA29E6B1-D730-4190-8863-3217C306E880}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{EA29E6B1-D730-4190-8863-3217C306E880}.Release|Any CPU.Build.0 = Release|Any CPU
+		{86FC11CE-55A9-4A64-ACE2-628CA7EA8684}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{86FC11CE-55A9-4A64-ACE2-628CA7EA8684}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{86FC11CE-55A9-4A64-ACE2-628CA7EA8684}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{86FC11CE-55A9-4A64-ACE2-628CA7EA8684}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B4B6AED8-5EAD-4A16-AD4C-30D6CCE01F51}.Debug|Any CPU.ActiveCfg = Debug|x64
+		{B4B6AED8-5EAD-4A16-AD4C-30D6CCE01F51}.Debug|Any CPU.Build.0 = Debug|x64
+		{B4B6AED8-5EAD-4A16-AD4C-30D6CCE01F51}.Release|Any CPU.ActiveCfg = Release|x64
+		{B4B6AED8-5EAD-4A16-AD4C-30D6CCE01F51}.Release|Any CPU.Build.0 = Release|x64
+		{1F499462-552B-4503-960C-55A3D624D9D4}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{1F499462-552B-4503-960C-55A3D624D9D4}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{1F499462-552B-4503-960C-55A3D624D9D4}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{1F499462-552B-4503-960C-55A3D624D9D4}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{EA29E6B1-D730-4190-8863-3217C306E880} = {4B3E3808-FEB7-4F91-8E04-0704DC6FFB2B}
+		{86FC11CE-55A9-4A64-ACE2-628CA7EA8684} = {4B3E3808-FEB7-4F91-8E04-0704DC6FFB2B}
+		{B4B6AED8-5EAD-4A16-AD4C-30D6CCE01F51} = {4B3E3808-FEB7-4F91-8E04-0704DC6FFB2B}
+		{1F499462-552B-4503-960C-55A3D624D9D4} = {6628BCD8-5FFA-44F8-ADBD-8EB9039787ED}
+	EndGlobalSection
+EndGlobal

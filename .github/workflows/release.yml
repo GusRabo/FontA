@@ -1,0 +1,59 @@
+name: Release
+
+# Pushing a tag like v0.2.0 builds FontA, packs it with Velopack and publishes a GitHub release.
+# Installed copies of FontA check this repository's releases and update themselves.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write   # lets the built-in token create the release and upload its files
+
+jobs:
+  release:
+    runs-on: windows-latest
+    env:
+      REPO_URL: https://github.com/${{ github.repository }}
+      PACK_ID: FontAApp
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Work out the version from the tag (v1.2.3 becomes 1.2.3)
+        id: version
+        shell: pwsh
+        run: |
+          $v = "${{ github.ref_name }}".TrimStart('v')
+          if ($v -notmatch '^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$') { throw "Tag '${{ github.ref_name }}' is not like v1.2.3" }
+          "value=$v" >> $env:GITHUB_OUTPUT
+
+      - name: Test
+        run: dotnet test tests/FontA.Tests --configuration Release
+
+      - name: Restore tools (vpk, the Velopack packer)
+        run: dotnet tool restore
+
+      - name: Publish the app (self-contained, so users need no .NET or Windows App SDK install)
+        run: >
+          dotnet publish src/FontA.App -c Release -r win-x64 -p:Platform=x64 -p:SelfContained=true
+          -p:Version=${{ steps.version.outputs.value }} -p:UpdateRepoUrl=${{ env.REPO_URL }}
+          -o publish
+
+      # Lets Velopack build small "delta" packages against the previous release. The first release has nothing to download.
+      - name: Fetch the previous release
+        continue-on-error: true
+        run: dotnet vpk download github --repoUrl ${{ env.REPO_URL }} --token ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pack
+        # To sign builds, add a certificate and pass --signParams here (see the README).
+        run: >
+          dotnet vpk pack --packId ${{ env.PACK_ID }} --packVersion ${{ steps.version.outputs.value }}
+          --packDir publish --mainExe FontA.App.exe --packTitle FontA --icon assets/fonta.ico
+
+      - name: Publish the GitHub release
+        run: >
+          dotnet vpk upload github --repoUrl ${{ env.REPO_URL }} --token ${{ secrets.GITHUB_TOKEN }}
+          --publish --releaseName "FontA ${{ steps.version.outputs.value }}" --tag ${{ github.ref_name }}

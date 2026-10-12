@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <RootNamespace>FontA.App</RootNamespace>
+    <UseWinUI>true</UseWinUI>
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <Platforms>x64</Platforms>
+    <AppendPlatformToOutputPath>false</AppendPlatformToOutputPath>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <EnableMsixTooling>true</EnableMsixTooling>
+    <Version>0.1.0</Version>
+    <ApplicationIcon>..\..\assets\fonta.ico</ApplicationIcon>
+    <!-- Velopack must run before anything else in Main, so we supply Main ourselves (see Program.cs). -->
+    <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
+    <!-- GitHub repository FontA checks for updates. The release workflow also sets it from the repository it runs in. -->
+    <UpdateRepoUrl>https://github.com/GusRabo/FontA</UpdateRepoUrl>
+  </PropertyGroup>
+  <ItemGroup>
+    <AssemblyMetadata Include="UpdateRepoUrl" Value="$(UpdateRepoUrl)" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.6.250228001" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.1742" />
+    <PackageReference Include="System.Drawing.Common" Version="8.0.10" />
+    <PackageReference Include="Velopack" Version="1.2.161" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\FontA.Core\FontA.Core.csproj" />
+    <ProjectReference Include="..\FontA.Rendering\FontA.Rendering.csproj" />
+  </ItemGroup>
+</Project>

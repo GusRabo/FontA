@@ -1,0 +1,95 @@
+<Window x:Class="FontA.App.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="FontA settings">
+  <ScrollViewer>
+    <StackPanel Padding="28,20,28,28" Spacing="4" MaxWidth="760" HorizontalAlignment="Stretch">
+
+      <!-- Font folders -->
+      <TextBlock Text="Font folders" Style="{StaticResource TitleTextBlockStyle}" Margin="0,0,0,4"/>
+      <TextBlock TextWrapping="Wrap" Opacity="0.7"
+                 Text="FontA reads fonts from these folders, remembers them between runs, and keeps the library up to date. Your font files are never changed."/>
+      <StackPanel x:Name="FolderList" Spacing="2" Margin="0,8,0,4"/>
+      <Button Content="Add folder…" Click="OnAddFolder" Margin="0,0,0,8"/>
+      <Grid MinHeight="44">
+        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+        <TextBlock Text="Scan folders when FontA starts" VerticalAlignment="Center"/>
+        <ToggleSwitch x:Name="RescanToggle" Grid.Column="1" OnContent="" OffContent="" MinWidth="0" Toggled="OnToggled"/>
+      </Grid>
+      <Grid MinHeight="44">
+        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+        <TextBlock Text="Watch folders for changes" VerticalAlignment="Center"/>
+        <ToggleSwitch x:Name="WatchToggle" Grid.Column="1" OnContent="" OffContent="" MinWidth="0" Toggled="OnToggled"/>
+      </Grid>
+
+      <Rectangle Height="1" Fill="{ThemeResource DividerStrokeColorDefaultBrush}" Margin="0,12"/>
+
+      <!-- App behavior -->
+      <TextBlock Text="App behavior" Style="{StaticResource TitleTextBlockStyle}" Margin="0,0,0,4"/>
+      <Grid MinHeight="44">
+        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+        <TextBlock Text="Hide to tray on close" VerticalAlignment="Center"/>
+        <ToggleSwitch x:Name="TrayToggle" Grid.Column="1" OnContent="" OffContent="" MinWidth="0" Toggled="OnToggled"/>
+      </Grid>
+      <Grid MinHeight="44">
+        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+        <TextBlock Text="Start on system start" VerticalAlignment="Center"/>
+        <ToggleSwitch x:Name="StartToggle" Grid.Column="1" OnContent="" OffContent="" MinWidth="0" Toggled="OnToggled"/>
+      </Grid>
+      <Grid MinHeight="44">
+        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+        <StackPanel VerticalAlignment="Center">
+          <TextBlock Text="Start hidden"/>
+          <TextBlock Text="Only when Windows starts FontA. It waits in the tray." Opacity="0.7" Style="{StaticResource CaptionTextBlockStyle}"/>
+        </StackPanel>
+        <ToggleSwitch x:Name="HiddenToggle" Grid.Column="1" OnContent="" OffContent="" MinWidth="0" Toggled="OnToggled"/>
+      </Grid>
+      <Grid MinHeight="44">
+        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+        <StackPanel VerticalAlignment="Center">
+          <TextBlock Text="Update automatically"/>
+          <TextBlock x:Name="UpdateNote" TextWrapping="Wrap" Opacity="0.7" Style="{StaticResource CaptionTextBlockStyle}"
+                     Text=""/>
+        </StackPanel>
+        <ToggleSwitch x:Name="UpdateToggle" Grid.Column="1" OnContent="" OffContent="" MinWidth="0" Toggled="OnToggled"/>
+      </Grid>
+      <Grid MinHeight="44">
+        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+        <StackPanel VerticalAlignment="Center">
+          <TextBlock Text="Deactivate all fonts on app exit"/>
+          <TextBlock Text="Fonts marked Always stay active." Opacity="0.7" Style="{StaticResource CaptionTextBlockStyle}"/>
+        </StackPanel>
+        <ToggleSwitch x:Name="ExitToggle" Grid.Column="1" OnContent="" OffContent="" MinWidth="0" Toggled="OnToggled"/>
+      </Grid>
+      <TextBlock x:Name="ErrorText" Visibility="Collapsed" TextWrapping="Wrap"
+                 Foreground="{ThemeResource SystemFillColorCriticalBrush}"/>
+
+      <Rectangle Height="1" Fill="{ThemeResource DividerStrokeColorDefaultBrush}" Margin="0,12"/>
+
+      <!-- Unused fonts -->
+      <TextBlock Text="Unused fonts" Style="{StaticResource TitleTextBlockStyle}" Margin="0,0,0,4"/>
+      <Grid MinHeight="44">
+        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+        <StackPanel VerticalAlignment="Center">
+          <TextBlock Text="Deactivate fonts I haven't used"/>
+          <TextBlock TextWrapping="Wrap" Opacity="0.7" Style="{StaticResource CaptionTextBlockStyle}"
+                     Text="A font counts as used when you preview it, activate or deactivate it, or change its Always setting in FontA. FontA can't see use inside other apps. Installed fonts are never touched, and each run can be undone."/>
+        </StackPanel>
+        <ToggleSwitch x:Name="UnusedToggle" Grid.Column="1" OnContent="" OffContent="" MinWidth="0" Toggled="OnToggled"/>
+      </Grid>
+      <NumberBox x:Name="DaysBox" Header="Days without use" Minimum="1" Maximum="365" Value="30" Width="200"
+                 HorizontalAlignment="Left" SpinButtonPlacementMode="Inline" ValueChanged="OnDaysChanged" Margin="0,4,0,0"/>
+      <Button Content="Check now" Click="OnCheckNow" Margin="0,8,0,0"/>
+
+      <Rectangle Height="1" Fill="{ThemeResource DividerStrokeColorDefaultBrush}" Margin="0,12"/>
+
+      <!-- About -->
+      <TextBlock Text="About" Style="{StaticResource TitleTextBlockStyle}" Margin="0,0,0,4"/>
+      <TextBlock x:Name="VersionText" Opacity="0.7"/>
+      <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,8,0,0">
+        <Button x:Name="CheckUpdatesButton" Content="Check for updates" Click="OnCheckForUpdates"/>
+        <TextBlock x:Name="UpdateStatusText" VerticalAlignment="Center" TextWrapping="Wrap" Opacity="0.85"/>
+      </StackPanel>
+    </StackPanel>
+  </ScrollViewer>
+</Window>

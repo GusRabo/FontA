@@ -1,0 +1,782 @@
+using System.Collections.ObjectModel;
+using FontA.Core.Activation;
+using FontA.Core.Library;
+using FontA.Rendering;
+using Microsoft.UI.Xaml.Media.Imaging;
+using System.Runtime.InteropServices.WindowsRuntime;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Windows.Storage.Pickers;
+using WinRT.Interop;
+
+namespace FontA.App;
+
+public sealed partial class MainWindow : Window
+{
+    private readonly FontLibrary _lib;
+    private readonly FontActivator _activator = new();
+    private readonly FontInstaller _installer = new();
+    private ObservableCollection<FontItem> _items = new();
+    private readonly FontPreviewRenderer _renderer = new();
+    private readonly ThumbnailCache _thumbs;
+    private FontItem? _selected;
+    private readonly Dictionary<string, float> _axisValues = new();
+    private readonly HashSet<string> _features = new();
+    private bool _building;
+    private CancellationTokenSource? _scanCts;
+    private CancellationTokenSource? _pruneCts;
+    private int _liveIndexed;
+    private long _nextLiveRefresh;
+    private NavEntry _nav = new(NavKind.All, "All fonts");
+    private readonly AppSettings _settings;
+    private readonly StartupRegistration _startup = new();
+    private readonly TrayIcon _tray;
+    private readonly FolderWatcher _watcher;
+    private SettingsWindow? _settingsWindow;
+    private bool _quitting;
+    private readonly UpdateService _updates = new();
+    private bool _restartAfterExit;
+    private bool _checkingForUpdates;
+    private readonly Queue<(string Path, bool Quiet)> _scanQueue = new();
+    private bool _scanQueueRunning;
+
+    private enum NavKind { All, Favorites, AlwaysActive, Installed, Collection, Tag }
+    private sealed record NavEntry(NavKind Kind, string Label, long Id = 0);
+
+    public MainWindow()
+    {
+        InitializeComponent();
+        var dir = DataDirectory;
+        Directory.CreateDirectory(dir);
+        _lib = new FontLibrary(Path.Combine(dir, "library.db"));
+        _settings = new AppSettings(_lib);
+        _thumbs = new ThumbnailCache(Path.Combine(dir, "thumbs"));
+        _thumbs.Prune(TimeSpan.FromDays(60));
+        ShouldStartHidden = _settings.StartHidden && Environment.GetCommandLineArgs().Contains(StartupRegistration.AutoStartArgument);
+
+        var iconPath = AppIcon.SaveTo(Path.Combine(dir, "fonta.ico"));
+        if (iconPath != null) AppWindow.SetIcon(iconPath);
+        _tray = new TrayIcon(WindowNative.GetWindowHandle(this), "FontA", AppIcon.Create(32));
+        _tray.ShowRequested += ShowFromTray;
+        _tray.QuitRequested += Quit;
+        AppWindow.Closing += OnAppWindowClosing;
+        _watcher = new FolderWatcher(DispatcherQueue, folder => EnqueueScan(folder, quiet: true));
+
+        Closed += (_, _) =>
+        {
+            CancelQuietly(_scanCts); CancelQuietly(_pruneCts);
+            _settingsWindow?.Close();
+            _watcher.Dispose(); _tray.Dispose();
+            if (_settings.DeactivateOnExit) _activator.DeactivateExcept(_lib.AlwaysActivePaths());
+            // A downloaded update installs once this process is gone: restarting if the person chose "Restart now".
+            _updates.ApplyWhenExited(_restartAfterExit);
+            _lib.Dispose(); _renderer.Dispose(); _thumbs.Dispose();
+        };
+        ((FrameworkElement)Content).ActualThemeChanged += (_, _) => Refresh();
+
+        // Keep "start with Windows" pointing at wherever this copy of the app now lives (it moves when you update it).
+        try { if (_settings.StartWithWindows && Environment.ProcessPath is { } exe) _startup.RefreshPath(exe); }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or System.Security.SecurityException or IOException) { }
+        RunUnusedCheck(manual: false, refresh: false); // before activating, so stale always-active fonts stay off
+        var unusedTimer = new Microsoft.UI.Xaml.DispatcherTimer { Interval = TimeSpan.FromHours(1) };
+        unusedTimer.Tick += (_, _) => RunUnusedCheck(manual: false, refresh: true);
+        unusedTimer.Start();
+        _activator.ActivateMany(_lib.AlwaysActivePaths());
+        RebuildNav();
+        Refresh();
+        _ = PruneMissingInBackground();
+        RegisterShortcuts();
+
+        UpdateTrayVisibility();
+        StartUpdateChecks();
+        _watcher.Sync(_lib.Folders(), _settings.WatchFolders);
+        if (_settings.RescanOnStartup)
+            foreach (var folder in _lib.Folders())
+                if (Directory.Exists(folder)) EnqueueScan(folder, quiet: false); // an unplugged drive is skipped, never "emptied"
+    }
+
+    // ---- what the settings window talks to ----
+    /// <summary>Where the library, thumbnails and icon live. FONTA_DATA_DIR overrides it (used to test against a throwaway library).</summary>
+    public static string DataDirectory =>
+        Environment.GetEnvironmentVariable("FONTA_DATA_DIR") is { Length: > 0 } custom
+            ? custom
+            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "FontA");
+
+    public UpdateService Updates => _updates;
+    public AppSettings Settings => _settings;
+    public FontLibrary Library => _lib;
+
+    /// <summary>True when Windows started FontA at sign-in and the person asked for it to stay out of sight.</summary>
+    public bool ShouldStartHidden { get; }
+
+    // A scan or check can finish (and dispose its token source) at the very moment the window closes.
+    private static void CancelQuietly(CancellationTokenSource? cts)
+    {
+        try { cts?.Cancel(); } catch (ObjectDisposedException) { }
+    }
+
+    /// <summary>Raised when the list of remembered font folders changes.</summary>
+    public event Action? FoldersChanged;
+
+    public void ShowFromTray()
+    {
+        AppWindow.Show();
+        (AppWindow.Presenter as Microsoft.UI.Windowing.OverlappedPresenter)?.Restore();
+        Activate();
+    }
+
+    /// <summary>Really exits, even when "hide to tray" is on.</summary>
+    public void Quit()
+    {
+        _quitting = true;
+        Close();
+    }
+
+    private void OnAppWindowClosing(Microsoft.UI.Windowing.AppWindow sender, Microsoft.UI.Windowing.AppWindowClosingEventArgs args)
+    {
+        // Never hold up Windows signing out or shutting down.
+        if (_quitting || _tray.SessionEnding || !_settings.HideToTray) return;
+        args.Cancel = true;
+        sender.Hide();
+    }
+
+    private void UpdateTrayVisibility()
+    {
+        // Start-hidden needs the icon too, otherwise there would be no way back to a hidden window.
+        if (_settings.HideToTray || _settings.StartHidden) _tray.Show(); else _tray.Hide();
+    }
+
+    /// <summary>Applies the start-with-Windows, tray and folder-watching settings. Returns an error message, or null.</summary>
+    public string? ApplyBehaviorSettings()
+    {
+        string? error = null;
+        try
+        {
+            if (_settings.StartWithWindows)
+            {
+                if (Environment.ProcessPath is { } exe) _startup.Enable(exe);
+            }
+            else _startup.Disable();
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or System.Security.SecurityException or IOException)
+        {
+            error = "Couldn't change the Windows startup setting: " + ex.Message;
+        }
+        UpdateTrayVisibility();
+        _watcher.Sync(_lib.Folders(), _settings.WatchFolders);
+        return error;
+    }
+
+    public async Task AddFolderViaPickerAsync()
+    {
+        var picker = new FolderPicker { SuggestedStartLocation = PickerLocationId.DocumentsLibrary };
+        picker.FileTypeFilter.Add("*");
+        InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
+        var folder = await picker.PickSingleFolderAsync();
+        if (folder == null) return;
+
+        _lib.AddFolder(folder.Path);            // remembered: rescanned at startup and watched for changes
+        _watcher.Sync(_lib.Folders(), _settings.WatchFolders);
+        FoldersChanged?.Invoke();
+        EnqueueScan(folder.Path, quiet: false);
+    }
+
+    public void RemoveFolder(string path)
+    {
+        _lib.RemoveFolder(path);
+        _watcher.Sync(_lib.Folders(), _settings.WatchFolders);
+        FoldersChanged?.Invoke();
+        RebuildNav();
+        Refresh();
+    }
+
+    // ---- updates (GitHub Releases through Velopack) ----
+    private void StartUpdateChecks()
+    {
+        if (!_updates.IsReady) return;
+        var timer = new Microsoft.UI.Xaml.DispatcherTimer { Interval = TimeSpan.FromHours(6) };
+        timer.Tick += async (_, _) => { if (_settings.AutoUpdate) await CheckForUpdatesAsync(manual: false); };
+        timer.Start();
+        _ = CheckSoonAfterStartAsync();
+    }
+
+    private async Task CheckSoonAfterStartAsync()
+    {
+        await Task.Delay(TimeSpan.FromSeconds(15)); // keep the first seconds free for loading the library
+        if (_settings.AutoUpdate) await CheckForUpdatesAsync(manual: false);
+    }
+
+    /// <summary>Checks for, and downloads, a newer version. Shows the "ready" banner when one is waiting.</summary>
+    public async Task<UpdateResult> CheckForUpdatesAsync(bool manual)
+    {
+        if (_checkingForUpdates) return new UpdateResult(UpdateStatus.Failed, "Already checking for updates.");
+        _checkingForUpdates = true;
+        try
+        {
+            var result = await _updates.CheckAndDownloadAsync();
+            if (result.Status == UpdateStatus.Downloaded) ShowUpdateReady(result.Version);
+            return result;
+        }
+        finally { _checkingForUpdates = false; }
+    }
+
+    private void ShowUpdateReady(string? version)
+    {
+        UpdateBar.Title = version == null ? "A FontA update is ready" : $"FontA {version} is ready";
+        UpdateBar.Message = "Restart to finish updating. Otherwise it installs the next time you quit FontA.";
+        UpdateBar.IsOpen = true;
+    }
+
+    private void OnRestartForUpdate(object s, RoutedEventArgs e)
+    {
+        _restartAfterExit = true;
+        Quit();
+    }
+
+    private void OnOpenSettings(object s, RoutedEventArgs e)
+    {
+        if (_settingsWindow == null)
+        {
+            _settingsWindow = new SettingsWindow(this);
+            _settingsWindow.Closed += (_, _) => _settingsWindow = null;
+        }
+        _settingsWindow.Activate();
+    }
+
+    /// <summary>Checks every indexed file still exists, without blocking startup, and refreshes if anything changed.</summary>
+    private async Task PruneMissingInBackground()
+    {
+        using var cts = _pruneCts = new CancellationTokenSource();
+        PruneResult result;
+        try { result = await Task.Run(() => _lib.PruneMissing(cts.Token)); }
+        catch (Exception ex) when (ex is IOException or Microsoft.Data.Sqlite.SqliteException) { return; }
+        finally { _pruneCts = null; } // the source is disposed when this method ends, so it must not be cancelled afterwards
+        if (cts.IsCancellationRequested || result.Removed + result.Rehomed == 0) return;
+        RebuildNav();
+        Refresh();
+    }
+
+    /// <summary>
+    /// Re-queries the library for the current view. A full refresh swaps in fresh items (new tint, scroll resets);
+    /// an incremental one keeps existing items and inserts only new ones, so scroll position, selection and
+    /// already-loaded thumbnails survive. It falls back to a full refresh when the change isn't a small pure insertion.
+    /// </summary>
+    private void Refresh(bool incremental = false)
+    {
+        var found = _lib.Search(SearchBox.Text,
+            _nav.Kind == NavKind.Favorites,
+            _nav.Kind == NavKind.Tag ? _nav.Label : null,
+            _nav.Kind == NavKind.Collection ? _nav.Id : null,
+            _nav.Kind == NavKind.AlwaysActive,
+            _nav.Kind == NavKind.Installed);
+        FontItem.InkLevel = ((FrameworkElement)Content).ActualTheme == ElementTheme.Dark ? (byte)255 : (byte)0;
+
+        if (incremental && TryInsertNew(found)) return;
+
+        _items = new ObservableCollection<FontItem>(
+            found.Select(f => new FontItem(f, _lib, _activator, _thumbs, _installer, SampleBox.Text)));
+        FontGrid.ItemsSource = _items;
+    }
+
+    private bool TryInsertNew(IReadOnlyList<LibraryFont> found)
+    {
+        const int MaxInline = 200;
+        var position = new Dictionary<long, int>(found.Count);
+        for (int i = 0; i < found.Count; i++) position[found[i].Id] = i;
+
+        // Every current item must still be present and in the same relative order.
+        int last = -1;
+        foreach (var item in _items)
+        {
+            if (!position.TryGetValue(item.Id, out var at) || at <= last) return false;
+            last = at;
+        }
+        if (found.Count - _items.Count > MaxInline) return false;
+
+        for (int i = 0; i < found.Count; i++)
+        {
+            if (i < _items.Count && _items[i].Id == found[i].Id) continue;
+            _items.Insert(i, new FontItem(found[i], _lib, _activator, _thumbs, _installer, SampleBox.Text));
+        }
+        return true;
+    }
+
+    private void OnContainerChanging(ListViewBase sender, ContainerContentChangingEventArgs args)
+    {
+        if (args.InRecycleQueue && args.Item is FontItem item) item.CancelThumbnail();
+    }
+
+    private void OnSearchChanged(AutoSuggestBox s, AutoSuggestBoxTextChangedEventArgs e) => Refresh();
+    private void OnSampleChanged(object s, TextChangedEventArgs e) { foreach (var i in _items) i.Sample = SampleBox.Text; RenderPreview(); }
+
+    private async void OnAddFolder(object s, RoutedEventArgs e) => await AddFolderViaPickerAsync();
+
+    /// <summary>Shows newly indexed fonts while a scan runs, backing off in proportion to how long a refresh takes.</summary>
+    private void LiveRefresh(int indexed)
+    {
+        long now = Environment.TickCount64;
+        if (indexed <= _liveIndexed || now < _nextLiveRefresh) return;
+        _liveIndexed = indexed;
+        Refresh(incremental: true);
+        _nextLiveRefresh = now + Math.Max(750, (Environment.TickCount64 - now) * 5);
+    }
+
+    private async void OnInstallClick(object sender, RoutedEventArgs e)
+    {
+        if (((FrameworkElement)sender).DataContext is FontItem item) await ToggleInstallAsync(item);
+    }
+
+    private async Task ToggleInstallAsync(FontItem item)
+    {
+        bool install = !item.IsInstalled;
+        if (install)
+        {
+            var dlg = new ContentDialog
+            {
+                Title = $"Install {item.Info.Family}?",
+                Content = "This copies the font file to your user fonts folder and registers it for your Windows account, " +
+                          "so it stays available in all apps after sign-out and restart, even without FontA running. " +
+                          "No administrator rights are needed, and you can uninstall it here at any time.",
+                PrimaryButtonText = "Install",
+                CloseButtonText = "Cancel",
+                DefaultButton = ContentDialogButton.Close,
+                XamlRoot = Content.XamlRoot
+            };
+            if (await dlg.ShowAsync() != ContentDialogResult.Primary) return;
+        }
+
+        var message = item.SetInstalled(install);
+        // An uninstalled font leaves the Installed list, and one whose original file was already gone disappears entirely.
+        if (_nav.Kind == NavKind.Installed || !File.Exists(item.Info.Path)) { RebuildNav(); Refresh(); }
+        if (message == null) return;
+        await new ContentDialog
+        {
+            Title = install ? "Couldn't install font" : "Font uninstalled",
+            Content = message,
+            CloseButtonText = "OK",
+            XamlRoot = Content.XamlRoot
+        }.ShowAsync();
+    }
+
+    private void OnCancelScan(object s, RoutedEventArgs e)
+    {
+        ScanCancel.IsEnabled = false;
+        ScanStatus.Text = "Cancelling…";
+        _scanQueue.Clear();
+        CancelQuietly(_scanCts);
+    }
+
+    /// <summary>Scans run one at a time. Folder-change scans are quiet; scans the person asked for show progress.</summary>
+    private void EnqueueScan(string path, bool quiet)
+    {
+        if (_scanQueue.Any(q => string.Equals(q.Path, path, StringComparison.OrdinalIgnoreCase))) return;
+        _scanQueue.Enqueue((path, quiet));
+        if (!_scanQueueRunning) _ = ProcessScanQueue();
+    }
+
+    private async Task ProcessScanQueue()
+    {
+        _scanQueueRunning = true;
+        try
+        {
+            while (_scanQueue.Count > 0)
+            {
+                var (path, quiet) = _scanQueue.Dequeue();
+                if (Directory.Exists(path)) await RunScan(path, quiet);
+            }
+        }
+        finally { _scanQueueRunning = false; }
+    }
+
+    private async Task RunScan(string path, bool quiet)
+    {
+        _liveIndexed = 0;
+        _nextLiveRefresh = 0;
+        using var cts = _scanCts = new CancellationTokenSource();
+        if (!quiet)
+        {
+            AddFolderButton.IsEnabled = false;
+            ScanCancel.IsEnabled = true;
+            ScanBar.IsIndeterminate = true;
+            ScanStatus.Text = "Looking for fonts…";
+            ScanPanel.Visibility = Visibility.Visible;
+        }
+
+        var progress = new Progress<ScanProgress>(p =>
+        {
+            if (cts.IsCancellationRequested || quiet) return;
+            ScanBar.IsIndeterminate = p.Total == 0;
+            ScanBar.Maximum = Math.Max(p.Total, 1);
+            ScanBar.Value = p.Done;
+            LiveRefresh(p.Indexed);
+            ScanStatus.Text = $"Scanning {p.Done:N0} of {p.Total:N0} — {Path.GetFileName(p.CurrentFile)}";
+        });
+
+        ScanResult? result = null;
+        string? error = null;
+        try { result = await Task.Run(() => _lib.Scan(path, progress, cts.Token)); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or Microsoft.Data.Sqlite.SqliteException)
+        {
+            error = ex.Message;
+        }
+
+        _scanCts = null;
+        bool changed = result is { } r && (r.Indexed + r.Removed + r.Rehomed > 0);
+        if (!quiet || changed)
+        {
+            RebuildNav();
+            Refresh();
+        }
+        if (quiet) return;
+
+        AddFolderButton.IsEnabled = true;
+        ScanBar.IsIndeterminate = false;
+        ScanBar.Value = ScanBar.Maximum;
+        ScanCancel.IsEnabled = false;
+        ScanStatus.Text = error != null ? $"Scan failed: {error}"
+            : result!.Cancelled ? $"Scan cancelled — {result.Indexed:N0} fonts indexed so far"
+            : $"Done — {result.Indexed:N0} new or updated, {result.Unchanged:N0} unchanged, {result.Removed:N0} removed"
+              + (result.Rehomed > 0 ? $", {result.Rehomed:N0} kept (installed in Windows)" : "");
+        _ = HideScanPanelLater(changed || error != null ? 4000 : 1500);
+    }
+
+    private async Task HideScanPanelLater(int milliseconds)
+    {
+        await Task.Delay(milliseconds);
+        if (_scanCts == null && _scanQueue.Count == 0) ScanPanel.Visibility = Visibility.Collapsed;
+    }
+
+    private void OnFontSelected(object s, SelectionChangedEventArgs e)
+    {
+        _selected = FontGrid.SelectedItem as FontItem;
+        CollectionsButton.IsEnabled = NewTagBox.IsEnabled = _selected != null;
+        if (_selected == null) return;
+        _lib.TouchUsed(_selected.Id); // previewing a font counts as using it
+        RebuildOrganize();
+        var info = _selected.Info;
+        _building = true;
+        PreviewTitle.Text = _selected.Title;
+        _axisValues.Clear(); _features.Clear();
+        AxesPanel.Children.Clear();
+        foreach (var a in info.Axes)
+        {
+            _axisValues[a.Tag] = a.Default;
+            var slider = new Slider { Header = a.Tag, Minimum = a.Min, Maximum = a.Max, Value = a.Default, StepFrequency = (a.Max - a.Min) / 200, Tag = a.Tag };
+            slider.ValueChanged += (_, ev) => { _axisValues[a.Tag] = (float)ev.NewValue; RenderPreview(); };
+            AxesPanel.Children.Add(slider);
+        }
+        FeaturesPanel.Items.Clear();
+        foreach (var f in info.Features)
+        {
+            var cb = new CheckBox { Content = f, MinWidth = 80 };
+            cb.Checked += (_, _) => { _features.Add(f); RenderPreview(); };
+            cb.Unchecked += (_, _) => { _features.Remove(f); RenderPreview(); };
+            FeaturesPanel.Items.Add(cb);
+        }
+        _building = false;
+        RenderPreview();
+    }
+
+    private void OnPreviewParamChanged(object s, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e) => RenderPreview();
+
+    private void RenderPreview()
+    {
+        if (_building || _selected == null) return;
+        var info = _selected.Info;
+        int w = 370, h = 260;
+        bool dark = ((FrameworkElement)Content).ActualTheme == ElementTheme.Dark;
+        var ink = dark ? new Vortice.Mathematics.Color4(1f, 1f, 1f, 1f) : new Vortice.Mathematics.Color4(0f, 0f, 0f, 1f);
+        var bytes = _renderer.Render(new PreviewRequest(info.Path, info.Family, SampleBox.Text, (float)SizeSlider.Value, w, h,
+            _axisValues.Count > 0 ? new Dictionary<string, float>(_axisValues) : null,
+            _features.Count > 0 ? _features.ToList() : null, info.Weight, info.IsItalic), ink);
+        var bmp = new WriteableBitmap(w, h);
+        using (var st = bmp.PixelBuffer.AsStream()) st.Write(bytes, 0, bytes.Length);
+        bmp.Invalidate();
+        PreviewImage.Source = bmp;
+    }
+
+    // ---- sidebar ----
+    private void RebuildNav()
+    {
+        _building = true;
+        NavList.Items.Clear();
+        NavList.Items.Add(new ListViewItem { Content = "All fonts", Tag = new NavEntry(NavKind.All, "All fonts") });
+        NavList.Items.Add(new ListViewItem { Content = "★ Favorites", Tag = new NavEntry(NavKind.Favorites, "Favorites") });
+        NavList.Items.Add(new ListViewItem { Content = "Always active", Tag = new NavEntry(NavKind.AlwaysActive, "Always active") });
+        NavList.Items.Add(new ListViewItem { Content = "Installed", Tag = new NavEntry(NavKind.Installed, "Installed") });
+
+        NavList.Items.Add(new ListViewHeaderItem { Content = "Collections" });
+        foreach (var (id, name) in _lib.Collections())
+        {
+            var item = new ListViewItem { Content = name, Tag = new NavEntry(NavKind.Collection, name, id) };
+            var del = new MenuFlyoutItem { Text = "Delete collection" };
+            del.Click += (_, _) =>
+            {
+                _lib.DeleteCollection(id);
+                if (_nav.Kind == NavKind.Collection && _nav.Id == id) _nav = new(NavKind.All, "All fonts");
+                RebuildNav();
+                Refresh();
+                RebuildOrganize();
+            };
+            var rename = new MenuFlyoutItem { Text = "Rename…" };
+            rename.Click += async (_, _) => await RenameCollectionAsync(id, name);
+            item.ContextFlyout = new MenuFlyout { Items = { rename, del } };
+            NavList.Items.Add(item);
+        }
+
+        NavList.Items.Add(new ListViewHeaderItem { Content = "Tags" });
+        foreach (var tag in _lib.Tags())
+            NavList.Items.Add(new ListViewItem { Content = "# " + tag, Tag = new NavEntry(NavKind.Tag, tag) });
+
+        foreach (var o in NavList.Items.OfType<ListViewItem>())
+            if (o.Tag is NavEntry e && e.Kind == _nav.Kind && e.Id == _nav.Id && e.Label == _nav.Label)
+            {
+                NavList.SelectedItem = o;
+                break;
+            }
+        _building = false;
+    }
+
+    private void OnNavChanged(object s, SelectionChangedEventArgs e)
+    {
+        if (_building || NavList.SelectedItem is not ListViewItem { Tag: NavEntry entry }) return;
+        _nav = entry;
+        Refresh();
+    }
+
+    private async void OnNewCollection(object s, RoutedEventArgs e)
+    {
+        var box = new TextBox { PlaceholderText = "Collection name" };
+        var dlg = new ContentDialog
+        {
+            Title = "New collection", Content = box, PrimaryButtonText = "Create", CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary, XamlRoot = Content.XamlRoot
+        };
+        if (await dlg.ShowAsync() != ContentDialogResult.Primary || string.IsNullOrWhiteSpace(box.Text)) return;
+        var name = box.Text.Trim();
+        _nav = new(NavKind.Collection, name, _lib.CreateCollection(name));
+        RebuildNav();
+        Refresh();
+        RebuildOrganize();
+    }
+
+    // ---- deactivate unused fonts ----
+    private List<DeactivatedFont> _lastDeactivated = new();
+
+    /// <summary>Called by the settings window when the unused-fonts options change; turning it on starts the clocks.</summary>
+    public void OnUnusedSettingsChanged()
+    {
+        if (_settings.UnusedEnabled) RunUnusedCheck(manual: false, refresh: true);
+    }
+
+    public void CheckUnusedNow() => RunUnusedCheck(manual: true, refresh: true);
+
+    private void RunUnusedCheck(bool manual, bool refresh)
+    {
+        if (!manual && !_settings.UnusedEnabled) return;
+        int days = _settings.UnusedDays;
+        var done = UnusedFontPolicy.Apply(_lib, _activator, TimeSpan.FromDays(days), DateTimeOffset.UtcNow);
+        _lastDeactivated = done.ToList();
+
+        if (done.Count == 0)
+        {
+            if (!manual) return;
+            UnusedBar.Title = "Nothing to deactivate";
+            UnusedBar.Message = $"Every active font was used within the last {days} days.";
+            UndoUnusedButton.Visibility = Visibility.Collapsed;
+            UnusedBar.IsOpen = true;
+            return;
+        }
+
+        var names = done.Select(d => Path.GetFileNameWithoutExtension(d.Path)).Take(3).ToList();
+        string list = string.Join(", ", names) + (done.Count > 3 ? $" and {done.Count - 3} more" : "");
+        UnusedBar.Title = done.Count == 1 ? "1 unused font deactivated" : $"{done.Count} unused fonts deactivated";
+        UnusedBar.Message = $"Not used in {days} days: {list}.";
+        UndoUnusedButton.Visibility = Visibility.Visible;
+        UnusedBar.IsOpen = true;
+        if (refresh) { RebuildNav(); Refresh(); }
+    }
+
+    private void OnUndoUnused(object s, RoutedEventArgs e)
+    {
+        UnusedFontPolicy.Undo(_lib, _activator, _lastDeactivated, DateTimeOffset.UtcNow);
+        _lastDeactivated = new();
+        UnusedBar.IsOpen = false;
+        RebuildNav();
+        Refresh();
+    }
+
+    // ---- keyboard shortcuts ----
+    private sealed record Shortcut(Windows.System.VirtualKey Key, Windows.System.VirtualKeyModifiers Mods,
+                                   string Label, string Description, Func<bool> Run);
+
+    private List<Shortcut> _shortcuts = new();
+    private bool _helpOpen;
+
+    private FontItem? SelectedFont => FontGrid.SelectedItem as FontItem;
+
+    /// <summary>One table drives both the key handling and the F1 help, so they can't drift apart.</summary>
+    private void RegisterShortcuts()
+    {
+        const Windows.System.VirtualKeyModifiers Ctrl = Windows.System.VirtualKeyModifiers.Control;
+        const Windows.System.VirtualKeyModifiers CtrlShift = Ctrl | Windows.System.VirtualKeyModifiers.Shift;
+        const Windows.System.VirtualKeyModifiers None = Windows.System.VirtualKeyModifiers.None;
+        var K = (Func<char, Windows.System.VirtualKey>)(ch => (Windows.System.VirtualKey)char.ToUpperInvariant(ch));
+        var Vk = Windows.System.VirtualKey.Escape;
+
+        bool OnSelected(Action<FontItem> act) { if (SelectedFont is { } f) { act(f); return true; } return false; }
+
+        _shortcuts = new List<Shortcut>
+        {
+            new(K('F'), Ctrl, "Ctrl+F", "Search fonts", () => { SearchBox.Focus(FocusState.Programmatic); return true; }),
+            new(K('L'), Ctrl, "Ctrl+L", "Edit the sample text", () => { SampleBox.Focus(FocusState.Programmatic); SampleBox.SelectAll(); return true; }),
+            new(K('O'), Ctrl, "Ctrl+O", "Add a folder of fonts", () => { if (!AddFolderButton.IsEnabled) return false; OnAddFolder(this, null!); return true; }),
+            new((Windows.System.VirtualKey)188, Ctrl, "Ctrl+,", "Open settings", () => { OnOpenSettings(this, null!); return true; }),
+            new(K('N'), Ctrl, "Ctrl+N", "New collection", () => { OnNewCollection(this, null!); return true; }),
+            new(K('D'), Ctrl, "Ctrl+D", "Favorite / unfavorite the selected font", () => OnSelected(f => f.IsFavorite = !f.IsFavorite)),
+            new(Windows.System.VirtualKey.Enter, Ctrl, "Ctrl+Enter", "Activate / deactivate the selected font",
+                () => OnSelected(f => { if (f.CanToggle) f.IsActive = !f.IsActive; })),
+            new(K('A'), CtrlShift, "Ctrl+Shift+A", "Toggle \"always active\" for the selected font",
+                () => OnSelected(f => { if (f.CanToggle) f.IsAlwaysActive = !f.IsAlwaysActive; })),
+            new(K('I'), CtrlShift, "Ctrl+Shift+I", "Install / uninstall the selected font for your account",
+                () => OnSelected(f => _ = ToggleInstallAsync(f))),
+            new((Windows.System.VirtualKey)187, Ctrl, "Ctrl+=", "Larger preview text", () => { SizeSlider.Value = Math.Min(SizeSlider.Maximum, SizeSlider.Value + 4); return true; }),
+            new((Windows.System.VirtualKey)189, Ctrl, "Ctrl+-", "Smaller preview text", () => { SizeSlider.Value = Math.Max(SizeSlider.Minimum, SizeSlider.Value - 4); return true; }),
+            new(Windows.System.VirtualKey.Number0, Ctrl, "Ctrl+0", "Reset preview size", () => { SizeSlider.Value = 48; return true; }),
+            new(Windows.System.VirtualKey.Number1, Ctrl, "Ctrl+1", "Show all fonts", () => SelectNav(NavKind.All)),
+            new(Windows.System.VirtualKey.Number2, Ctrl, "Ctrl+2", "Show favorites", () => SelectNav(NavKind.Favorites)),
+            new(Windows.System.VirtualKey.Number3, Ctrl, "Ctrl+3", "Show always-active fonts", () => SelectNav(NavKind.AlwaysActive)),
+            new(Windows.System.VirtualKey.Number4, Ctrl, "Ctrl+4", "Show installed fonts", () => SelectNav(NavKind.Installed)),
+            new(Windows.System.VirtualKey.F2, None, "F2", "Rename the selected collection",
+                () => { if (_nav.Kind != NavKind.Collection) return false; _ = RenameCollectionAsync(_nav.Id, _nav.Label); return true; }),
+            new(Vk, None, "Esc", "Cancel a running scan, otherwise clear the search", () =>
+            {
+                if (_scanCts != null) { OnCancelScan(this, null!); return true; }
+                if (string.IsNullOrEmpty(SearchBox.Text)) return false;
+                SearchBox.Text = "";
+                return true;
+            }),
+            new(Windows.System.VirtualKey.F1, None, "F1", "Show this list", () => { _ = ShowShortcutsAsync(); return true; }),
+        };
+
+        var root = (UIElement)Content;
+        foreach (var s in _shortcuts)
+        {
+            var accel = new Microsoft.UI.Xaml.Input.KeyboardAccelerator { Key = s.Key, Modifiers = s.Mods };
+            accel.Invoked += (_, a) => a.Handled = s.Run(); // unhandled keys (e.g. Esc with nothing to do) keep their normal meaning
+            root.KeyboardAccelerators.Add(accel);
+        }
+    }
+
+    private bool SelectNav(NavKind kind)
+    {
+        var item = NavList.Items.OfType<ListViewItem>().FirstOrDefault(i => i.Tag is NavEntry { Kind: var k } && k == kind);
+        if (item == null) return false;
+        NavList.SelectedItem = item;
+        return true;
+    }
+
+    private async Task ShowShortcutsAsync()
+    {
+        if (_helpOpen) return;
+        _helpOpen = true;
+        try
+        {
+            var grid = new Grid { ColumnSpacing = 16, RowSpacing = 4 };
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            for (int i = 0; i < _shortcuts.Count; i++)
+            {
+                grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+                var key = new TextBlock { Text = _shortcuts[i].Label, FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Consolas") };
+                var desc = new TextBlock { Text = _shortcuts[i].Description, TextWrapping = TextWrapping.Wrap };
+                Grid.SetRow(key, i); Grid.SetRow(desc, i); Grid.SetColumn(desc, 1);
+                grid.Children.Add(key); grid.Children.Add(desc);
+            }
+            await new ContentDialog
+            {
+                Title = "Keyboard shortcuts",
+                Content = new ScrollViewer { Content = grid, MaxHeight = 460 },
+                CloseButtonText = "Close",
+                XamlRoot = Content.XamlRoot
+            }.ShowAsync();
+        }
+        finally { _helpOpen = false; }
+    }
+
+    private async Task RenameCollectionAsync(long id, string current)
+    {
+        var box = new TextBox { Text = current, PlaceholderText = "Collection name" };
+        var error = new TextBlock
+        {
+            Text = "Enter a name that no other collection uses.",
+            Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SystemFillColorCriticalBrush"],
+            Visibility = Visibility.Collapsed
+        };
+        var dlg = new ContentDialog
+        {
+            Title = "Rename collection",
+            Content = new StackPanel { Spacing = 8, Children = { box, error } },
+            PrimaryButtonText = "Rename", CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary, XamlRoot = Content.XamlRoot
+        };
+        // Keep the dialog open on a blank or duplicate name so the person can fix it instead of starting over.
+        dlg.PrimaryButtonClick += (_, a) =>
+        {
+            if (_lib.RenameCollection(id, box.Text)) return;
+            a.Cancel = true;
+            error.Visibility = Visibility.Visible;
+        };
+        box.Loaded += (_, _) => { box.Focus(FocusState.Programmatic); box.SelectAll(); };
+        if (await dlg.ShowAsync() != ContentDialogResult.Primary) return;
+
+        var name = box.Text.Trim();
+        if (_nav.Kind == NavKind.Collection && _nav.Id == id) _nav = _nav with { Label = name };
+        RebuildNav();
+        RebuildOrganize(); // the "Collections" menu in the preview pane lists names too
+    }
+
+    // ---- per-font organisation (preview pane) ----
+    private void RebuildOrganize()
+    {
+        if (_selected == null) return;
+        var fontId = _selected.Id;
+        var member = _lib.CollectionsFor(fontId);
+        var flyout = new MenuFlyout();
+        foreach (var (id, name) in _lib.Collections())
+        {
+            var toggle = new ToggleMenuFlyoutItem { Text = name, IsChecked = member.Contains(id) };
+            toggle.Click += (_, _) =>
+            {
+                if (toggle.IsChecked) _lib.AddToCollection(id, fontId); else _lib.RemoveFromCollection(id, fontId);
+                if (_nav.Kind == NavKind.Collection) Refresh();
+            };
+            flyout.Items.Add(toggle);
+        }
+        if (flyout.Items.Count == 0) flyout.Items.Add(new MenuFlyoutItem { Text = "No collections yet", IsEnabled = false });
+        CollectionsButton.Flyout = flyout;
+
+        TagsPanel.Items.Clear();
+        foreach (var tag in _lib.TagsFor(fontId))
+        {
+            var chip = new Button { Content = tag + "  ✕", Margin = new Thickness(0, 0, 6, 6), Padding = new Thickness(8, 2, 8, 2) };
+            chip.Click += (_, _) =>
+            {
+                _lib.RemoveTag(fontId, tag);
+                RebuildOrganize();
+                RebuildNav();
+                if (_nav.Kind == NavKind.Tag) Refresh();
+            };
+            TagsPanel.Items.Add(chip);
+        }
+    }
+
+    private void OnNewTagKeyDown(object s, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
+    {
+        if (e.Key != Windows.System.VirtualKey.Enter || _selected == null || string.IsNullOrWhiteSpace(NewTagBox.Text)) return;
+        _lib.AddTag(_selected.Id, NewTagBox.Text);
+        NewTagBox.Text = "";
+        RebuildOrganize();
+        RebuildNav();
+    }
+}
