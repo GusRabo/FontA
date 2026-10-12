@@ -1,0 +1,44 @@
+name: CI
+
+# Builds and tests every push to main and every pull request, and fails if any dependency has a known vulnerability.
+# Read-only: this workflow can't publish or change anything.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore exactly the locked dependencies
+        run: dotnet restore --locked-mode
+
+      - name: Build the app (catches XAML and compile errors the tests don't exercise)
+        run: dotnet build src/FontA.App --configuration Release --no-restore -p:Platform=x64
+
+      - name: Test
+        run: dotnet test tests/FontA.Tests --configuration Release --no-restore
+
+      - name: Fail on known-vulnerable dependencies
+        shell: pwsh
+        run: |
+          $out = dotnet list package --vulnerable --include-transitive 2>&1 | Out-String
+          $out
+          if ($out -match '(?m)^\s+>\s') { throw "A dependency has a known vulnerability (see above)." }

@@ -1,4 +1,5 @@
 using System.Reflection;
+using FontA.Core.Security;
 using Velopack;
 using Velopack.Sources;
 
@@ -25,8 +26,13 @@ public sealed record UpdateResult(UpdateStatus Status, string Message, string? V
 /// </summary>
 public sealed class UpdateService
 {
-    /// <summary>Test hook: a folder or URL to use instead of GitHub (see the README's release section).</summary>
+#if DEBUG
+    /// <summary>
+    /// Test hook: a folder or URL to use instead of GitHub. Compiled into debug builds only. In a release build an
+    /// environment variable must never be able to redirect where updates come from.
+    /// </summary>
     public const string SourceOverrideVariable = "FONTA_UPDATE_SOURCE";
+#endif
 
     private readonly UpdateManager? _manager;
     private VelopackAsset? _downloaded;
@@ -35,10 +41,13 @@ public sealed class UpdateService
     {
         try
         {
+#if DEBUG
             if (Environment.GetEnvironmentVariable(SourceOverrideVariable) is { Length: > 0 } custom)
                 _manager = new UpdateManager(custom);
-            else if (RepoUrl is { Length: > 0 } repo)
-                _manager = new UpdateManager(new GithubSource(repo, accessToken: null, prerelease: false));
+            else
+#endif
+            if (RepoUrlPolicy.IsTrusted(RepoUrl))
+                _manager = new UpdateManager(new GithubSource(RepoUrl!, accessToken: null, prerelease: false));
         }
         catch (Exception ex) when (ex is ArgumentException or UriFormatException or InvalidOperationException)
         {

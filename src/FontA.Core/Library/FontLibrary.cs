@@ -162,8 +162,7 @@ public sealed class FontLibrary : IDisposable
     {
         const int BatchSize = 50;
         long interval = (long)(reportInterval ?? TimeSpan.FromMilliseconds(50)).TotalMilliseconds;
-        var files = Directory.EnumerateFiles(folder, "*", new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true })
-            .Where(f => Extensions.Contains(Path.GetExtension(f))).ToList();
+        var files = EnumerateFontFiles(folder).ToList();
 
         int indexed = 0, unchanged = 0, removed = 0, rehomed = 0, done = 0;
         var clock = System.Diagnostics.Stopwatch.StartNew();
@@ -220,6 +219,28 @@ public sealed class FontLibrary : IDisposable
             return new ScanResult(indexed, unchanged, removed, cancelled, rehomed);
         }
         finally { tx.Dispose(); }
+    }
+
+    /// <summary>
+    /// Font files under a folder, without ever entering a junction or symbolic link to another folder. Following them
+    /// lets a crafted folder make a scan loop for as long as the path allows, or pull in files from outside the folder
+    /// the person actually chose. (Add the link's target as its own folder if you want its fonts.)
+    /// </summary>
+    internal static IEnumerable<string> EnumerateFontFiles(string folder)
+    {
+        var options = new EnumerationOptions
+        {
+            RecurseSubdirectories = true,
+            IgnoreInaccessible = true,
+            AttributesToSkip = FileAttributes.Hidden | FileAttributes.System
+        };
+        return new System.IO.Enumeration.FileSystemEnumerable<string>(folder, (ref System.IO.Enumeration.FileSystemEntry e) => e.ToFullPath(), options)
+        {
+            ShouldIncludePredicate = (ref System.IO.Enumeration.FileSystemEntry e) =>
+                !e.IsDirectory && Extensions.Contains(Path.GetExtension(e.FileName).ToString()),
+            ShouldRecursePredicate = (ref System.IO.Enumeration.FileSystemEntry e) =>
+                (e.Attributes & FileAttributes.ReparsePoint) == 0
+        };
     }
 
     private static void Upsert(SqliteConnection db, FontInfo f, long mtime)

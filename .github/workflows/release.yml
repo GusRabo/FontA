@@ -1,24 +1,44 @@
 name: Release
 
 # Pushing a tag like v0.2.0 builds FontA, packs it with Velopack and publishes a GitHub release.
-# Installed copies of FontA check this repository's releases and update themselves.
+# Installed copies of FontA check this repository's releases and update themselves, so this workflow is the one place
+# where a mistake or a compromise would reach every user. It is deliberately strict:
+#   - actions are pinned to exact commits, not movable tags
+#   - the token is read-only except in the one job that publishes
+#   - the tag name is never pasted into a script (it is passed as an environment variable and validated)
+#   - only commits that are on main can be released
+#   - dependencies must match the committed lock files exactly
 on:
   push:
     tags: ['v*']
 
 permissions:
-  contents: write   # lets the built-in token create the release and upload its files
+  contents: read
 
 jobs:
   release:
     runs-on: windows-latest
+    permissions:
+      contents: write   # lets this job create the release and upload its files; nothing else gets write access
     env:
       REPO_URL: https://github.com/${{ github.repository }}
       PACK_ID: FontAApp
+      REF_NAME: ${{ github.ref_name }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
 
-      - uses: actions/setup-dotnet@v4
+      - name: Only release commits that are on main
+        shell: pwsh
+        run: |
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor $env:GITHUB_SHA origin/main
+          if ($LASTEXITCODE -ne 0) { throw "Tag $env:REF_NAME is not on the main branch, so it will not be released." }
+
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
         with:
           dotnet-version: 8.0.x
 
@@ -26,26 +46,28 @@ jobs:
         id: version
         shell: pwsh
         run: |
-          $v = "${{ github.ref_name }}".TrimStart('v')
-          if ($v -notmatch '^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$') { throw "Tag '${{ github.ref_name }}' is not like v1.2.3" }
+          $v = $env:REF_NAME.TrimStart('v')
+          if ($v -notmatch '^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$') { throw "Tag '$env:REF_NAME' is not like v1.2.3" }
           "value=$v" >> $env:GITHUB_OUTPUT
 
-      - name: Test
-        run: dotnet test tests/FontA.Tests --configuration Release
+      - name: Restore exactly the locked dependencies
+        run: |
+          dotnet restore --locked-mode
+          dotnet tool restore
 
-      - name: Restore tools (vpk, the Velopack packer)
-        run: dotnet tool restore
+      - name: Test
+        run: dotnet test tests/FontA.Tests --configuration Release --no-restore
 
       - name: Publish the app (self-contained, so users need no .NET or Windows App SDK install)
         run: >
-          dotnet publish src/FontA.App -c Release -r win-x64 -p:Platform=x64 -p:SelfContained=true
+          dotnet publish src/FontA.App -c Release -r win-x64 -p:Platform=x64 -p:SelfContained=true --no-restore
           -p:Version=${{ steps.version.outputs.value }} -p:UpdateRepoUrl=${{ env.REPO_URL }}
           -o publish
 
       # Lets Velopack build small "delta" packages against the previous release. The first release has nothing to download.
       - name: Fetch the previous release
         continue-on-error: true
-        run: dotnet vpk download github --repoUrl ${{ env.REPO_URL }} --token ${{ secrets.GITHUB_TOKEN }}
+        run: dotnet vpk download github --repoUrl ${{ env.REPO_URL }} --token $env:GH_TOKEN
 
       - name: Pack
         # To sign builds, add a certificate and pass --signParams here (see the README).
@@ -55,5 +77,16 @@ jobs:
 
       - name: Publish the GitHub release
         run: >
-          dotnet vpk upload github --repoUrl ${{ env.REPO_URL }} --token ${{ secrets.GITHUB_TOKEN }}
-          --publish --releaseName "FontA ${{ steps.version.outputs.value }}" --tag ${{ github.ref_name }}
+          dotnet vpk upload github --repoUrl ${{ env.REPO_URL }} --token $env:GH_TOKEN
+          --publish --releaseName "FontA ${{ steps.version.outputs.value }}" --tag $env:REF_NAME
+
+      # Checksums let anyone confirm the installer they downloaded is the one this workflow built.
+      - name: Attach SHA-256 checksums
+        shell: pwsh
+        run: |
+          $lines = Get-ChildItem Releases -File |
+            Where-Object { $_.Name -match 'Setup\.exe$|Portable\.zip$|\.nupkg$' } |
+            ForEach-Object { "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name }
+          $lines | Set-Content Releases/SHA256SUMS.txt -Encoding ascii
+          $lines
+          gh release upload $env:REF_NAME Releases/SHA256SUMS.txt --repo $env:GITHUB_REPOSITORY --clobber

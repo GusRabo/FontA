@@ -3,22 +3,43 @@ using System.Text;
 
 namespace FontA.Core.Fonts;
 
-/// <summary>Minimal clean-room OpenType/TrueType/TTC metadata reader (name, OS/2, head, fvar, GSUB, GPOS).</summary>
+/// <summary>
+/// Minimal clean-room OpenType/TrueType/TTC metadata reader (name, OS/2, head, fvar, GSUB, GPOS).
+/// Font files are untrusted input (they arrive in downloads and shared folders), so this reader checks every offset
+/// and length against the file before using it, caps what it will read, and never throws for a malformed file.
+/// Only fonts that pass these checks are indexed, and only indexed fonts are ever rendered or activated by FontA.
+/// </summary>
 public static class OpenTypeReader
 {
+    /// <summary>Largest font file FontA will read. Real fonts, including large CJK collections, are far smaller.</summary>
+    public const long MaxFileBytes = 256L * 1024 * 1024;
+
+    private const int MaxFacesInCollection = 1024;
+
     public static IReadOnlyList<FontInfo> Read(string path)
     {
-        var data = File.ReadAllBytes(path);
+        byte[]? data = LoadCapped(path);
+        return data == null ? new List<FontInfo>() : Parse(data, path);
+    }
+
+    /// <summary>Parses font bytes already in memory. Never throws for malformed data.</summary>
+    internal static IReadOnlyList<FontInfo> Parse(byte[] data, string path)
+    {
         var result = new List<FontInfo>();
+        if (data.Length < 12) return result;
+
         try
         {
-            if (data.Length < 12) return result;
             if (Tag(data, 0) == "ttcf")
             {
                 uint count = U32(data, 8);
-                for (int i = 0; i < count && 12 + i * 4 + 4 <= data.Length; i++)
+                if (count == 0 || count > MaxFacesInCollection) return result;
+                if (12L + count * 4 > data.Length) return result;
+                for (int i = 0; i < count; i++)
                 {
-                    var info = ReadFace(data, (int)U32(data, 12 + i * 4), path, i);
+                    uint faceOffset = U32(data, 12 + i * 4);
+                    if (faceOffset > data.Length - 12) continue;   // a face that starts outside the file
+                    var info = ReadFace(data, (int)faceOffset, path, i);
                     if (info != null) result.Add(info);
                 }
             }
@@ -28,24 +49,46 @@ public static class OpenTypeReader
                 if (info != null) result.Add(info);
             }
         }
-        catch (Exception ex) when (ex is IndexOutOfRangeException or ArgumentOutOfRangeException)
+        catch (Exception ex) when (ex is not OutOfMemoryException)
         {
-            // Corrupt font: return whatever parsed cleanly.
+            // Hostile or corrupt input can fail in many ways; whatever the cause, keep what parsed cleanly and move on.
         }
         return result;
     }
 
+    /// <summary>Reads the file unless it is missing, unreadable or larger than <see cref="MaxFileBytes"/>.</summary>
+    private static byte[]? LoadCapped(string path)
+    {
+        try
+        {
+            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            if (fs.Length > MaxFileBytes) return null;
+            var buffer = new byte[(int)fs.Length];
+            fs.ReadExactly(buffer);
+            return buffer;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
+        {
+            return null; // includes a file that shrank while we read it
+        }
+    }
+
     private static FontInfo? ReadFace(byte[] d, int offset, string path, int faceIndex)
     {
+        if (offset < 0 || offset > d.Length - 12) return null;
         string sfnt = Tag(d, offset);
         if (sfnt is not ("OTTO" or "true" or "typ1") && U32(d, offset) != 0x00010000) return null;
 
         int numTables = U16(d, offset + 4);
+        if (numTables == 0 || 12L + offset + numTables * 16L > d.Length) return null;   // directory runs past the end
         var tables = new Dictionary<string, (int Off, int Len)>();
         for (int i = 0; i < numTables; i++)
         {
             int rec = offset + 12 + i * 16;
-            tables[Tag(d, rec)] = ((int)U32(d, rec + 8), (int)U32(d, rec + 12));
+            uint off = U32(d, rec + 8), len = U32(d, rec + 12);
+            // A table must lie inside the file (tables are padded to 4 bytes, so allow that much slack at the end).
+            if (off > d.Length || len > d.Length || (long)off + len > d.Length + 3L) return null;
+            tables[Tag(d, rec)] = ((int)off, (int)len);
         }
 
         var names = tables.TryGetValue("name", out var n) ? ReadNames(d, n.Off) : new();

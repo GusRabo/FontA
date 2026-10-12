@@ -121,12 +121,51 @@ Everything is stored per user in `%LOCALAPPDATA%\FontA`:
 
 - `library.db`: the SQLite index (fonts, favorites, tags, collections, remembered folders, settings)
 - `crash.log`: written if FontA hits an unexpected error. Please include it when reporting a problem.
-- Set the `FONTA_DATA_DIR` environment variable to use a different folder (handy for trying things out without
-  touching your real library).
+- Debug builds (not release builds) honour a `FONTA_DATA_DIR` environment variable to use a different folder, handy for
+  trying things out without touching your real library. Release builds ignore it on purpose.
 - `thumbs\`: cached thumbnails. Safe to delete at any time; they are re-rendered on demand, and files unused for
   60 days are removed at startup.
 
 Your original font files are never modified. They are only copied if you use **Install**.
+
+## Security
+
+FontA reads files and folders you don't control, runs entirely as you (it never needs administrator rights), and updates
+itself from the internet, so it is built to distrust its inputs. The full policy, including how to report a problem,
+is in [SECURITY.md](SECURITY.md). In short:
+
+- **Hostile fonts:** FontA validates every font with its own bounds-checked parser before anything else touches it,
+  refuses oversized files, and never indexes, previews or activates a font that fails. The parser is fuzz-tested.
+- **Hostile folders:** scans never follow junctions or symbolic links, so a crafted folder can't loop a scan or reach
+  outside the folder you chose.
+- **Tampered data:** all SQL is parameterised, and uninstalling only ever deletes a font file inside the per-user fonts
+  folder, no matter what the database says.
+- **Updates:** only from `github.com` over HTTPS, from the repository built into the app, with checksum
+  verification and no downgrades. Release builds ignore environment variables, so nothing can redirect them.
+- **Supply chain:** NuGet packages are locked to exact versions and hashes (`packages.lock.json`), CI fails on
+  dependencies with known vulnerabilities, and the release workflow pins its actions to exact commits, takes the
+  tag name as data rather than script, only releases commits on `main`, and has write access only in the job that
+  publishes. Each release carries `SHA256SUMS.txt`.
+
+**Honest limits:** Windows' own font engine renders the previews, so a flaw in Windows could be reached through a font
+that passes FontA's checks (keep Windows updated and only add folders you trust). Builds are not code-signed yet.
+
+### Protect the update channel (do this on GitHub)
+
+Every installed copy of FontA trusts whatever is published on the repository's releases, so whoever controls the
+repository controls what runs on your users' PCs. These settings are on GitHub and can't be set from the code:
+
+1. **Turn on two-factor authentication** for your GitHub account (Settings > Password and authentication). This is the
+   single most important step.
+2. **Protect release tags**: Settings > Rules > Rulesets > New tag ruleset. Target `v*`, and enable *Restrict
+   deletions* and *Block force pushes* (and *Restrict updates*). A release tag should never be moved or removed.
+3. **Protect `main`**: a branch ruleset that blocks force pushes and deletion, and requires the **CI** check to pass.
+4. **Turn on Dependabot alerts and security updates**, **secret scanning** and **push protection** (Settings > Code
+   security). The repository already has a Dependabot config for NuGet packages and Actions.
+5. **Enable private vulnerability reporting** (Settings > Code security), so people can follow SECURITY.md.
+6. **Limit Actions** (Settings > Actions > General): allow only GitHub-owned actions, and set *Workflow permissions* to
+   *Read repository contents*. The release job asks for the write access it needs itself.
+7. Consider **code signing** (see below) and keep any signing certificate in repository secrets only.
 
 ## Updating FontA
 
@@ -146,9 +185,8 @@ for a small change, against a ~64 MB full package).
    git remote add origin https://github.com/GusRabo/FontA.git
    git push -u origin main
    ```
-2. In the repository's **Settings > Actions > General > Workflow permissions**, allow *Read and write permissions*, so
-   the release workflow can publish. Nothing else needs configuring: the workflow sets the update address itself from
-   the repository it runs in.
+2. Nothing else needs configuring: the release workflow asks for the write access it needs itself, and sets the update
+   address from the repository it runs in. (Workflow permissions can stay at the safer read-only default.)
 
 ### Publishing an update
 
@@ -202,9 +240,9 @@ more so for a new, little-downloaded app. Velopack supports signing: add `--sign
 
 ### Testing updates without GitHub
 
-Set `FONTA_UPDATE_SOURCE` to a folder (or URL) holding `vpk pack` output and an installed copy will use it instead of
-GitHub. That is how the update path was tested: pack two versions into one folder, run the older one from its portable
-zip, and watch it update to the newer.
+Debug builds only: set `FONTA_UPDATE_SOURCE` to a folder (or URL) holding `vpk pack` output and that build will use it
+instead of GitHub. Release builds ignore the variable, so it can't be used to redirect updates. To test, publish two
+versions with `-c Debug`, pack both into one folder, run the older one from its portable zip, and watch it update.
 
 ## Known limitations
 

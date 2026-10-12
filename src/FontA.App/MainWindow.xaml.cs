@@ -96,11 +96,18 @@ public sealed partial class MainWindow : Window
     }
 
     // ---- what the settings window talks to ----
-    /// <summary>Where the library, thumbnails and icon live. FONTA_DATA_DIR overrides it (used to test against a throwaway library).</summary>
+    /// <summary>
+    /// Where the library, thumbnails and icon live. Debug builds honour FONTA_DATA_DIR so tests can use a throwaway
+    /// library; release builds always use the per-user folder, so an environment variable can't redirect your data.
+    /// </summary>
     public static string DataDirectory =>
+#if DEBUG
         Environment.GetEnvironmentVariable("FONTA_DATA_DIR") is { Length: > 0 } custom
             ? custom
             : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "FontA");
+#else
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "FontA");
+#endif
 
     public UpdateService Updates => _updates;
     public AppSettings Settings => _settings;

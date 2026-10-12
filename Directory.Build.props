@@ -1,0 +1,10 @@
+<Project>
+  <PropertyGroup>
+    <!--
+      Record the exact version and hash of every NuGet package in packages.lock.json (committed). Release and CI builds
+      restore in locked mode, so a package that changed upstream, or was swapped, makes the build fail instead of
+      silently shipping different code.
+    -->
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+  </PropertyGroup>
+</Project>

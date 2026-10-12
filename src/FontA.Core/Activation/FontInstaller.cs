@@ -42,11 +42,12 @@ public sealed class FontInstaller
 
         // Collections hold several faces under one file; register them under the file's own name.
         bool collection = ext is ".ttc" or ".otc";
-        var valueName = (collection ? Path.GetFileNameWithoutExtension(source) : font.FullName)
+        var valueName = SafeValueName(collection ? Path.GetFileNameWithoutExtension(source) : font.FullName)
                         + (ext is ".otf" or ".otc" ? " (OpenType)" : " (TrueType)");
 
         Directory.CreateDirectory(_fontsDir);
         var dest = ChooseDestination(source);
+        if (!IsOurFile(dest)) throw new InvalidOperationException("Refusing to install outside the fonts folder.");
 
         using var key = Registry.CurrentUser.CreateSubKey(_registryKey, writable: true);
         if (key.GetValue(valueName) is string existing && !SamePath(existing, dest))
@@ -67,6 +68,10 @@ public sealed class FontInstaller
     /// <summary>Removes the registration and the copied file. Returns false if the file couldn't be deleted (still in use).</summary>
     public bool Uninstall(InstallRecord record)
     {
+        // The record comes from FontA's database. Never act on a path that isn't a font file directly inside the fonts
+        // folder, so a damaged or tampered database can't make an uninstall delete or unregister anything else.
+        if (!IsOurFile(record.DestPath)) return false;
+
         if (_notifySystem) FontNative.RemoveFontResourceEx(record.DestPath, 0, IntPtr.Zero);
 
         using (var key = Registry.CurrentUser.OpenSubKey(_registryKey, writable: true))
@@ -84,6 +89,30 @@ public sealed class FontInstaller
         {
             return false; // Windows keeps a font file open until apps using it close; it is no longer registered.
         }
+    }
+
+    /// <summary>True only for a font file that sits directly in the fonts folder (installs are flat, never in subfolders).</summary>
+    private bool IsOurFile(string path)
+    {
+        try
+        {
+            var full = Path.GetFullPath(path);
+            var dir = Path.GetFullPath(_fontsDir).TrimEnd('\\', '/');
+            return string.Equals(Path.GetDirectoryName(full), dir, StringComparison.OrdinalIgnoreCase)
+                   && (Path.GetExtension(full).ToLowerInvariant() is ".ttf" or ".otf" or ".ttc" or ".otc");
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException) { return false; }
+    }
+
+    /// <summary>
+    /// Font names come from inside the font file, so treat them as untrusted: drop control characters, collapse
+    /// whitespace and keep it to a sensible length (registry value names are limited, and a huge or odd name helps no one).
+    /// </summary>
+    internal static string SafeValueName(string name)
+    {
+        var cleaned = new string(name.Where(ch => !char.IsControl(ch)).ToArray()).Trim();
+        if (cleaned.Length > 200) cleaned = cleaned[..200].TrimEnd();
+        return cleaned.Length == 0 ? "Font" : cleaned;
     }
 
     /// <summary>Reuses an identical existing copy, otherwise picks a free name so nothing is overwritten.</summary>

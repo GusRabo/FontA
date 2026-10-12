@@ -6,11 +6,15 @@ namespace FontA.App;
 
 public partial class App : Application
 {
-    // Instances using different data folders (only done for testing) don't count as the same app.
+#if DEBUG
+    // Debug builds can use a separate data folder (FONTA_DATA_DIR); such instances don't count as the same app.
     private static readonly string InstanceSuffix =
         Environment.GetEnvironmentVariable("FONTA_DATA_DIR") is { Length: > 0 } d
-            ? "." + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(d.ToLowerInvariant())))[..8] // stable across processes, unlike string.GetHashCode
+            ? "." + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(d.ToLowerInvariant())))[..8]
             : "";
+#else
+    private const string InstanceSuffix = "";
+#endif
     private static readonly string MutexName = @"Local\FontA.SingleInstance" + InstanceSuffix;
     private static readonly string ShowEventName = @"Local\FontA.ShowWindow" + InstanceSuffix;
 
