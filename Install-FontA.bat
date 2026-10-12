@@ -3,7 +3,7 @@ rem ==========================================================================
 rem  Install-FontA.bat - installs FontA for the current Windows user.
 rem
 rem  It downloads the latest FontA installer from the project's GitHub release
-rem  (https://github.com/GusRabo/FontA/releases), checks the download against the
+rem  (https://github.com/GusRabo/FontA-releases/releases), checks the download against the
 rem  SHA-256 checksum published with that release, and only then runs it.
 rem  No administrator rights are needed.
 rem
@@ -34,7 +34,7 @@ exit /b %RC%
 function Install-FontA {
     param(
         # Where releases are downloaded from. Anything other than GitHub is only accepted together with -NoRun (testing).
-        [string] $BaseUrl = 'https://github.com/GusRabo/FontA/releases/latest/download',
+        [string] $BaseUrl = 'https://github.com/GusRabo/FontA-releases/releases/latest/download',
         # A folder that may already hold FontAApp-win-Setup.exe and SHA256SUMS.txt for an offline install.
         [string] $LocalDir = '',
         # Download and verify, but don't run the installer (used by the tests).
@@ -46,7 +46,7 @@ function Install-FontA {
     $ProgressPreference = 'SilentlyContinue'     # the progress bar makes large downloads much slower
     try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch { }
 
-    if (-not $NoRun -and $BaseUrl -notmatch '^https://github\.com/GusRabo/FontA/') {
+    if (-not $NoRun -and $BaseUrl -notmatch '^https://github\.com/GusRabo/FontA-releases/') {
         Write-Host "  Refusing to run an installer from $BaseUrl" -ForegroundColor Red
         return 2
     }

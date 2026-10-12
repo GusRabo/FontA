@@ -19,8 +19,8 @@
     <ApplicationIcon>..\..\assets\fonta.ico</ApplicationIcon>
     <!-- Velopack must run before anything else in Main, so we supply Main ourselves (see Program.cs). -->
     <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
-    <!-- GitHub repository FontA checks for updates. The release workflow also sets it from the repository it runs in. -->
-    <UpdateRepoUrl>https://github.com/GusRabo/FontA</UpdateRepoUrl>
+    <!-- Public GitHub repository that holds only the releases FontA checks for updates (the source repository is private). The release workflow sets it too. -->
+    <UpdateRepoUrl>https://github.com/GusRabo/FontA-releases</UpdateRepoUrl>
   </PropertyGroup>
   <ItemGroup>
     <AssemblyMetadata Include="UpdateRepoUrl" Value="$(UpdateRepoUrl)" />

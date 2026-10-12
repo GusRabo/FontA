@@ -186,17 +186,16 @@ for a small change, against a ~64 MB full package).
 
 ### One-time setup
 
-1. **Put the project on GitHub.** The repository should be **public**. Updates are read straight from its releases, and
-   a private repository would need an access key stored inside the app, which every user could extract.
-   ```powershell
-   git init
-   git add .
-   git commit -m "FontA"
-   git remote add origin https://github.com/GusRabo/FontA.git
-   git push -u origin main
-   ```
-2. Nothing else needs configuring: the release workflow asks for the write access it needs itself, and sets the update
-   address from the repository it runs in. (Workflow permissions can stay at the safer read-only default.)
+1. **Source stays private, releases are public.** Installed copies read updates straight from GitHub Releases without
+   signing in, and a private repository would need an access key stored inside the app, which every user could
+   extract. So the source lives in the private `GusRabo/FontA`, and the **public** `GusRabo/FontA-releases` holds
+   nothing but the release files (installer, update packages, `SHA256SUMS.txt`) and a short README.
+2. **Create the releases repository** (once): a new **public** repository named `FontA-releases`, initialised with a
+   README so it has a first commit. In its Settings, turn on *Immutable releases*.
+3. **Give the workflow access to it** (once): create a *fine-grained personal access token* (GitHub > Settings >
+   Developer settings) that can reach **only** `FontA-releases`, with **Contents: Read and write**, and short expiry
+   you are happy to renew. Add it to the private repository as the Actions secret **`RELEASES_TOKEN`**
+   (Settings > Secrets and variables > Actions). The workflow stops with a clear message if it is missing.
 
 ### Publishing an update
 
@@ -213,7 +212,7 @@ People install **FontAApp-win-Setup.exe** from the release page the first time. 
 FontA checks about 15 seconds after it starts and every 6 hours, as long as *Update automatically* is on in Settings.
 **Settings > About > Check for updates** checks on demand.
 
-Prefer to build on your own PC? `scripts\release.ps1 -Version 0.2.0 -Repo https://github.com/GusRabo/FontA` builds
+Prefer to build on your own PC? `scripts\release.ps1 -Version 0.2.0 -Repo https://github.com/GusRabo/FontA-releases` builds
 and packs into `releases\` without sending anything anywhere. Add `-Upload` (with a `GITHUB_TOKEN` that can write to the
 repository) to publish.
 
@@ -224,7 +223,7 @@ repository) to publish.
 - **Your library is safe.** The installed app lives in `%LOCALAPPDATA%\FontAApp`; your library and settings stay in
   `%LOCALAPPDATA%\FontA`. They are deliberately different folders: uninstalling deletes the app folder, and it must
   never contain your data. (This is why the package ID is `FontAApp`, not `FontA`.)
-- **Releases are immutable.** This repository has GitHub's *immutable releases* turned on, so once a release is
+- **Releases are immutable.** The releases repository has GitHub's *immutable releases* turned on, so once a release is
   published its files can't be added to, changed or replaced, by anyone. The workflow therefore uploads everything
   (including `SHA256SUMS.txt`) to a draft and publishes it last. If a published release has a mistake, fix it with a
   new version rather than editing it.
@@ -233,8 +232,8 @@ repository) to publish.
 - **Start on system start keeps working** after updates: it points at the app's stable `current` folder, and is
   repaired on every start anyway.
 - **The update address** is `<UpdateRepoUrl>` in `src/FontA.App/FontA.App.csproj`, set to
-  `https://github.com/GusRabo/FontA`. Change it there if the repository ever moves; releases built by the workflow use
-  whichever repository they are built in.
+  `https://github.com/GusRabo/FontA-releases`. Change it there (and `RELEASES_REPO` in the release workflow) if the
+  releases repository ever moves.
 - **Privacy:** an update check contacts `api.github.com` and nothing else, and sends no information about you or your
   fonts. Turn *Update automatically* off to stop the background checks.
 
