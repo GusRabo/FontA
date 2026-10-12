@@ -67,6 +67,7 @@ public sealed partial class MainWindow : Window
 
         Closed += (_, _) =>
         {
+            _wheelHook?.Dispose();
             CancelQuietly(_scanCts); CancelQuietly(_pruneCts);
             _settingsWindow?.Close();
             _watcher.Dispose(); _tray.Dispose();
@@ -101,6 +102,7 @@ public sealed partial class MainWindow : Window
         _ = PruneMissingInBackground();
         RegisterShortcuts();
         SetUpHoverScroll();
+        SetUpWheel();
         ((FrameworkElement)Content).Loaded += (_, _) =>
         {
             UpdateScale();

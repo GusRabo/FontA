@@ -450,6 +450,67 @@ public sealed partial class MainWindow
         }
     }
 
+    private WheelHook? _wheelHook;
+
+    /// <summary>
+    /// The mouse wheel scrolls the sidebar (the left area) or the font list (the main area, toolbar and gaps included)
+    /// according to where the pointer is, every turn, whatever was under the pointer before. The details pane scrolls
+    /// itself, and an open dialog or menu keeps the wheel.
+    /// </summary>
+    private void SetUpWheel()
+    {
+        _wheelHook = new WheelHook(WinRT.Interop.WindowNative.GetWindowHandle(this), (sx, sy, delta) =>
+        {
+            var root = (FrameworkElement)Content;
+            if (root.XamlRoot is not { } xamlRoot || !IsWindowActive()) return false;
+            // A dialog, flyout or suggestion list keeps the wheel for itself. Tooltips don't count (one appears whenever the
+            // pointer rests over a button or the search box, and must not stop the wheel working there).
+            if (VisualTreeHelper.GetOpenPopups(this).Any(p => p.Child is not ToolTip)) return false;
+
+            var pt = new WheelPoint { X = sx, Y = sy };
+            if (!ScreenToClient(WinRT.Interop.WindowNative.GetWindowHandle(this), ref pt)) return false;
+            double scale = xamlRoot.RasterizationScale;
+            double x = pt.X / scale, y = pt.Y / scale;
+            if (x < 0 || y < 0 || y >= root.ActualHeight) return false;
+
+            double side = SidebarScroll.ActualWidth;
+            ScrollViewer? target = null;
+            double notch;
+            if (x < side) { target = SidebarScroll; notch = 76; }
+            else if (x < side + MainColumn.ActualWidth) { target = Scroller(FontGrid); notch = 110; }
+            else return false;
+            if (target == null) return false;
+
+            ScrollBy(target, -delta / 120.0 * notch);
+            return true;
+        });
+    }
+
+    private readonly Dictionary<ScrollViewer, double> _wheelGoal = new();
+    private long _lastWheelTick;
+
+    /// <summary>
+    /// Scrolls by an amount, remembering where the scrolling is heading so quick turns of the wheel add up instead of
+    /// each starting from wherever the list happens to be mid-move. The move itself is made on the next turn of the
+    /// message loop, not inside the mouse hook.
+    /// </summary>
+    private void ScrollBy(ScrollViewer sv, double pixels)
+    {
+        long now = Environment.TickCount64;
+        if (now - _lastWheelTick > 250 || !_wheelGoal.ContainsKey(sv)) _wheelGoal[sv] = sv.VerticalOffset;
+        _lastWheelTick = now;
+        double goal = Math.Clamp(_wheelGoal[sv] + pixels, 0, sv.ScrollableHeight);
+        _wheelGoal[sv] = goal;
+        DispatcherQueue.TryEnqueue(DispatcherQueuePriority.High, () => sv.ChangeView(null, goal, null, disableAnimation: true));
+    }
+
+    private bool IsWindowActive() => GetForegroundWindow() == WinRT.Interop.WindowNative.GetWindowHandle(this);
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct WheelPoint { public int X, Y; }
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern bool ScreenToClient(IntPtr hwnd, ref WheelPoint p);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
+
     private DispatcherTimer EnsureHoverTimer()
     {
         if (_hoverTimer != null) return _hoverTimer;
@@ -461,6 +522,7 @@ public sealed partial class MainWindow
             if (y < EdgeZone) step = -MaxEdgeSpeed * (1 - Math.Max(y, 0) / EdgeZone);
             else if (y > height - EdgeZone) step = MaxEdgeSpeed * (1 - Math.Max(height - y, 0) / EdgeZone);
             if (step == 0) return;
+            if (Environment.TickCount64 - _lastWheelTick < 700) return;   // the wheel is in use: edge scrolling would pull the list back
             var sv = Scroller(list);
             if (sv != null) sv.ChangeView(null, Math.Clamp(sv.VerticalOffset + step, 0, sv.ScrollableHeight), null, disableAnimation: true);
         };
