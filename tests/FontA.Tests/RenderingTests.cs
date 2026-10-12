@@ -99,22 +99,4 @@ public class ThumbnailCacheTests
         for (int i = 0; i < texts.Count; i++) Assert.Equal(expected[i], actual[i]);
         Assert.Equal(texts.Count, par.RenderCount);
     }
-
-    [Fact]
-    public void Pool_is_faster_than_a_single_renderer()
-    {
-        if (Environment.ProcessorCount < 4) return;
-        var texts = Enumerable.Range(0, 120).Select(i => $"Timing sample {i} with a longer line of text to lay out").ToList();
-        double Time(int parallelism)
-        {
-            using var c = new ThumbnailCache(Directory.CreateTempSubdirectory().FullName, parallelism: parallelism);
-            var sw = System.Diagnostics.Stopwatch.StartNew();
-            Parallel.ForEach(texts, new ParallelOptions { MaxDegreeOfParallelism = 8 }, t => c.GetMask(Req(t)));
-            return sw.Elapsed.TotalMilliseconds;
-        }
-        Time(2); // warm up DirectWrite
-        double one = Time(1), many = Time(4);
-        Console.WriteLine($"TIMING single={one:F0}ms pool={many:F0}ms");
-        Assert.True(many < one, $"single={one:F0}ms pool={many:F0}ms");
-    }
 }

@@ -16,9 +16,12 @@ public static class OpenTypeReader
 
     private const int MaxFacesInCollection = 1024;
 
-    public static IReadOnlyList<FontInfo> Read(string path)
+    public static IReadOnlyList<FontInfo> Read(string path) => Read(path, MaxFileBytes);
+
+    /// <summary>Reads a font file, refusing it if it is larger than <paramref name="maxBytes"/> (a lower limit lets tests prove the cap).</summary>
+    internal static IReadOnlyList<FontInfo> Read(string path, long maxBytes)
     {
-        byte[]? data = LoadCapped(path);
+        byte[]? data = LoadCapped(path, maxBytes);
         return data == null ? new List<FontInfo>() : Parse(data, path);
     }
 
@@ -57,12 +60,12 @@ public static class OpenTypeReader
     }
 
     /// <summary>Reads the file unless it is missing, unreadable or larger than <see cref="MaxFileBytes"/>.</summary>
-    private static byte[]? LoadCapped(string path)
+    private static byte[]? LoadCapped(string path, long maxBytes)
     {
         try
         {
             using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-            if (fs.Length > MaxFileBytes) return null;
+            if (fs.Length > maxBytes) return null;
             var buffer = new byte[(int)fs.Length];
             fs.ReadExactly(buffer);
             return buffer;

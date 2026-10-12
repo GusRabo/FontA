@@ -80,17 +80,15 @@ public class SecurityTests
     }
 
     [Fact]
-    public void Oversized_files_are_refused_without_reading_them()
+    public void Files_over_the_size_cap_are_refused_by_length_alone()
     {
-        var path = Path.Combine(Path.GetTempPath(), "fonta-oversize-" + Guid.NewGuid().ToString("N") + ".ttf");
-        try
-        {
-            using (var fs = File.Create(path)) fs.SetLength(OpenTypeReader.MaxFileBytes + 1);   // zero-filled, not actually written
-            var clock = Stopwatch.StartNew();
-            Assert.Empty(OpenTypeReader.Read(path));
-            Assert.True(clock.Elapsed < TimeSpan.FromSeconds(2), "an oversized file should be rejected from its length alone");
-        }
-        finally { File.Delete(path); }
+        var arial = Path.Combine(Fonts, "arial.ttf");
+        var length = new FileInfo(arial).Length;
+
+        Assert.Single(OpenTypeReader.Read(arial, maxBytes: length));            // exactly at the cap: accepted
+        Assert.Empty(OpenTypeReader.Read(arial, maxBytes: length - 1));         // one byte over: refused, though it is a valid font
+        Assert.True(OpenTypeReader.MaxFileBytes is > 1024 * 1024 and <= 1024L * 1024 * 1024);   // the real cap is sane
+        Assert.Single(OpenTypeReader.Read(arial));                              // and an ordinary font is nowhere near it
     }
 
     // ---------- crafted folders ----------
