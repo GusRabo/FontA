@@ -32,7 +32,7 @@ public sealed class FontItem : INotifyPropertyChanged
     private readonly FontLibrary _lib;
     private readonly FontActivator _activator;
     private readonly ThumbnailCache _thumbs;
-    private readonly DispatcherQueue _ui = DispatcherQueue.GetForCurrentThread();
+    private static readonly DispatcherQueue Ui = DispatcherQueue.GetForCurrentThread();
     private long? _stamp;   // the file's timestamp, read only when a thumbnail is actually needed (not for every card in a huge library)
     private string _sample;
     private bool _favorite;
@@ -88,11 +88,17 @@ public sealed class FontItem : INotifyPropertyChanged
         }
     }
 
-    /// <summary>Called when the card scrolls out of view so queued work is dropped.</summary>
+    /// <summary>
+    /// Called when the card scrolls out of view: queued work is dropped and the picture goes back to the pool (a thumbnail
+    /// is about half a megabyte, so keeping every one already scrolled past would grow without limit in a big library).
+    /// It is fetched again, from the cache, if the card comes back.
+    /// </summary>
     public void CancelThumbnail()
     {
         _loading?.Cancel();
         _loading = null;
+        GiveBack(_thumb);
+        _thumb = null;
     }
 
     private long Stamp()
@@ -130,10 +136,12 @@ public sealed class FontItem : INotifyPropertyChanged
                 }
                 finally { Gate.Release(); }
 
-                _ui.TryEnqueue(() =>
+                Ui.TryEnqueue(() =>
                 {
                     if (cts.IsCancellationRequested) return;
+                    var old = _thumb;
                     _thumb = Tint(mask, w, h);
+                    if (!ReferenceEquals(old, _thumb)) GiveBack(old);
                     Raise(nameof(Thumbnail));
                 });
             }
@@ -142,28 +150,61 @@ public sealed class FontItem : INotifyPropertyChanged
             {
                 // DirectWrite reports COM failures (missing or corrupt file) as its own exception types, and nothing
                 // observes this fire-and-forget task, so any failure just leaves the card without a thumbnail.
-                if (!File.Exists(info.Path)) _ui.TryEnqueue(() => { _missing = true; Raise(nameof(MissingVisibility)); });
+                if (!File.Exists(info.Path)) Ui.TryEnqueue(() => { _missing = true; Raise(nameof(MissingVisibility)); });
             }
         });
     }
 
-    private static WriteableBitmap Tint(byte[] mask, int width, int height)
+    // A WriteableBitmap holds native memory that is only given back when the garbage collector gets round to the small
+    // managed object wrapping it, which in a big library it doesn't do for a long time. So bitmaps are recycled: when a
+    // card scrolls away its bitmap goes back to this pool and the next card that needs one of the same size draws into it.
+    private static readonly Dictionary<(int W, int H), Stack<WriteableBitmap>> Pool = new();
+    private const int PoolLimitPerSize = 48;
+
+    private static WriteableBitmap Rent(int width, int height)
     {
-        var px = new byte[mask.Length * 4];
-        byte ink = InkLevel;
-        for (int i = 0; i < mask.Length; i++)
-        {
-            byte a = mask[i];
-            byte c = (byte)(ink * a / 255); // premultiplied
-            px[i * 4] = px[i * 4 + 1] = px[i * 4 + 2] = c;
-            px[i * 4 + 3] = a;
-        }
-        var bmp = new WriteableBitmap(width, height);
-        px.CopyTo(0, bmp.PixelBuffer, 0, px.Length);
-        bmp.Invalidate();
-        return bmp;
+        lock (Pool)
+            if (Pool.TryGetValue((width, height), out var stack) && stack.Count > 0) return stack.Pop();
+        return new WriteableBitmap(width, height);
     }
 
+    private static void GiveBack(ImageSource? picture)
+    {
+        if (picture is not WriteableBitmap bmp) return;
+        lock (Pool)
+        {
+            var key = (bmp.PixelWidth, bmp.PixelHeight);
+            if (!Pool.TryGetValue(key, out var stack)) Pool[key] = stack = new Stack<WriteableBitmap>();
+            if (stack.Count < PoolLimitPerSize) stack.Push(bmp);
+        }
+    }
+
+    /// <summary>Forget the recycled bitmaps (their size is no longer used: the text size or screen scale changed).</summary>
+    public static void ClearBitmapPool() { lock (Pool) Pool.Clear(); }
+
+    private static WriteableBitmap Tint(byte[] mask, int width, int height)
+    {
+        // The temporary pixel buffer is half a megabyte: borrowed from a pool rather than allocated, so scrolling fast
+        // through a big library doesn't pile up large short-lived arrays for the garbage collector.
+        int count = mask.Length * 4;
+        var px = System.Buffers.ArrayPool<byte>.Shared.Rent(count);
+        try
+        {
+            byte ink = InkLevel;
+            for (int i = 0; i < mask.Length; i++)
+            {
+                byte a = mask[i];
+                byte c = (byte)(ink * a / 255); // premultiplied
+                px[i * 4] = px[i * 4 + 1] = px[i * 4 + 2] = c;
+                px[i * 4 + 3] = a;
+            }
+            var bmp = Rent(width, height);
+            px.CopyTo(0, bmp.PixelBuffer, 0, count);
+            bmp.Invalidate();
+            return bmp;
+        }
+        finally { System.Buffers.ArrayPool<byte>.Shared.Return(px); }
+    }
     public bool IsFavorite
     {
         get => _favorite;

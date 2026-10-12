@@ -20,6 +20,9 @@ public sealed class FontGroup : ObservableCollection<FontItem>
 
     public string Display { get; }
 
+    /// <summary>What the heading shows when hovered: where the folder is.</summary>
+    public string Tooltip => Key == FontA.Core.Library.FolderGrouping.SystemKey ? "Fonts installed in Windows" : Key;
+
     public string CountText => Count == 1 ? "1 font" : $"{Count:N0} fonts";
 
     /// <summary><see cref="ActivationDot.Off"/>, <see cref="ActivationDot.Some"/> or <see cref="ActivationDot.On"/>.</summary>

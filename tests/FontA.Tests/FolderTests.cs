@@ -64,6 +64,32 @@ public class FolderTests
         Assert.Equal(groups.Count, groups.Select(g => g.Key).Distinct(StringComparer.OrdinalIgnoreCase).Count());
     }
 
+
+    [Fact]
+    public void Fonts_in_the_windows_fonts_folders_are_one_system_group()
+    {
+        var saved = FolderGrouping.SystemFontFolders;
+        try
+        {
+            FolderGrouping.SystemFontFolders = new[] { @"C:\Windows\Fonts", @"C:\Users\me\AppData\Local\Microsoft\Windows\Fonts" };
+            var roots = new[] { @"C:\Windows\Fonts", @"D:\Mine" };
+            var paths = new[]
+            {
+                @"C:\Windows\Fonts\arial.ttf", @"C:\Windows\Fonts\sub\x.ttf", @"c:\windows\fonts\b.ttf",
+                @"C:\Users\me\AppData\Local\Microsoft\Windows\Fonts\u.ttf",
+                @"D:\Mine\Abeat\a.ttf", @"D:\Mine\Agency\g.ttf", @"C:\Windows\FontsExtra\n.ttf"
+            };
+            var groups = FolderGrouping.Group(paths, p => p, roots);
+
+            Assert.Equal("System", groups[0].Display);                             // listed first
+            Assert.Equal(FolderGrouping.SystemKey, groups[0].Key);
+            Assert.Equal(4, groups[0].Items.Count);                                // both Windows fonts folders, subfolders and any capitalisation
+            Assert.Equal(new[] { "Abeat", "Agency", "FontsExtra" }, groups.Skip(1).Select(g => g.Display).ToArray());   // a look-alike folder is not "system"
+            Assert.Equal(FolderGrouping.SystemKey, FolderGrouping.GroupKeyOf(@"C:\Windows\Fonts\arial.ttf"));
+            Assert.Equal(@"D:\Mine\Abeat", FolderGrouping.GroupKeyOf(@"D:\Mine\Abeat\a.ttf"));
+        }
+        finally { FolderGrouping.SystemFontFolders = saved; }
+    }
     // ---------- the library numbers behind the sidebar ----------
 
     private static FontLibrary NewLibrary(string root, params string[] fontFolders)

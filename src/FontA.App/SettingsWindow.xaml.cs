@@ -15,7 +15,10 @@ public sealed partial class SettingsWindow : Window
         InitializeComponent();
         _main = main;
         _settings = main.Settings;
-        AppWindow.Resize(new Windows.Graphics.SizeInt32(660, 860));
+        PlaceOver(main);
+        // Windows may put a new window at its own default spot when it first shows: place it again once it is up.
+        bool placed = false;
+        Activated += (_, _) => { if (!placed) { placed = true; PlaceOver(main); } };
 
         var version = typeof(App).Assembly.GetName().Version?.ToString(3) ?? "unknown";
         var how = _main.Updates.IsReady ? "installed" : "not installed (development build)";
@@ -28,11 +31,32 @@ public sealed partial class SettingsWindow : Window
         _loading = false;
     }
 
+    /// <summary>
+    /// Opens centred over the main window, and stays above it: an owned window rides on top of its owner, and
+    /// minimises and restores with it, instead of drifting behind it.
+    /// </summary>
+    private void PlaceOver(Window owner)
+    {
+        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+        var ownerHwnd = WinRT.Interop.WindowNative.GetWindowHandle(owner);
+        SetWindowLongPtr(hwnd, GWLP_HWNDPARENT, ownerHwnd);
+
+        double scale = GetDpiForWindow(ownerHwnd) / 96.0;
+        var area = owner.AppWindow.Size;
+        int w = Math.Min((int)(660 * scale), Math.Max(area.Width - 40, 400));
+        int h = Math.Min((int)(860 * scale), Math.Max(area.Height - 40, 400));
+        var at = owner.AppWindow.Position;
+        AppWindow.MoveAndResize(new Windows.Graphics.RectInt32(at.X + (area.Width - w) / 2, at.Y + (area.Height - h) / 2, w, h));
+    }
+
+    private const int GWLP_HWNDPARENT = -8;
+    [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")] private static extern IntPtr SetWindowLongPtr(IntPtr hwnd, int index, IntPtr value);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern uint GetDpiForWindow(IntPtr hwnd);
+
     private void LoadValues()
     {
         RescanToggle.IsOn = _settings.RescanOnStartup;
         WatchToggle.IsOn = _settings.WatchFolders;
-        HoverScrollToggle.IsOn = _settings.HoverScroll;
         TrayToggle.IsOn = _settings.HideToTray;
         StartToggle.IsOn = _settings.StartWithWindows;
         HiddenToggle.IsOn = _settings.StartHidden;
@@ -53,7 +77,6 @@ public sealed partial class SettingsWindow : Window
 
         if (toggle == RescanToggle) _settings.RescanOnStartup = on;
         else if (toggle == WatchToggle) _settings.WatchFolders = on;
-        else if (toggle == HoverScrollToggle) _settings.HoverScroll = on;
         else if (toggle == TrayToggle) _settings.HideToTray = on;
         else if (toggle == StartToggle) _settings.StartWithWindows = on;
         else if (toggle == HiddenToggle) _settings.StartHidden = on;

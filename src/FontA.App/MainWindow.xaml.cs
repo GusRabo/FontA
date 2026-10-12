@@ -53,7 +53,7 @@ public sealed partial class MainWindow : Window
         // If an earlier run was killed or crashed, Windows still has its fonts switched on: pick them up so they show as active.
         _activator.Adopt(_journal.LoadIfSameSession());
         _activator.Changed += ScheduleJournalSave;
-        _thumbs = new ThumbnailCache(Path.Combine(dir, "thumbs"), memoryCapacity: 500);
+        _thumbs = new ThumbnailCache(Path.Combine(dir, "thumbs"), memoryCapacity: 150);
         _thumbs.Prune(TimeSpan.FromDays(60));
         ShouldStartHidden = _settings.StartHidden && Environment.GetCommandLineArgs().Contains(StartupRegistration.AutoStartArgument);
 
@@ -101,7 +101,6 @@ public sealed partial class MainWindow : Window
         _ = ActivateAlwaysActiveAsync();
         _ = PruneMissingInBackground();
         RegisterShortcuts();
-        SetUpHoverScroll();
         SetUpWheel();
         ((FrameworkElement)Content).Loaded += (_, _) =>
         {
@@ -321,6 +320,7 @@ public sealed partial class MainWindow : Window
         int size = (int)Math.Round(ListSizeSlider.Value);
         if (size == FontItem.ListSize) return;
         FontItem.ListSize = size;
+        FontItem.ClearBitmapPool();
         _settings.ListSize = size;
         foreach (var item in AllItems) item.ApplyListSize();
     }
@@ -332,6 +332,7 @@ public sealed partial class MainWindow : Window
         s = Math.Round(Math.Clamp(s, 1, 3) * 4) / 4;      // quarter steps: fewer distinct cache entries
         if (Math.Abs(s - FontItem.Scale) < 0.01) return;
         FontItem.Scale = s;
+        FontItem.ClearBitmapPool();
         foreach (var item in AllItems) item.ApplyListSize();
     }
 

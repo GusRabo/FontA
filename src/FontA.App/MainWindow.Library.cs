@@ -80,6 +80,7 @@ public sealed partial class MainWindow
         // selected until the person picks something.
         _fontsView.View?.MoveCurrentToPosition(-1);
         if (offset > 0) RestoreScroll(FontGrid, offset);
+        ScheduleMemoryTrim();
     }
 
     private IReadOnlyList<LibraryFont> QueryFonts()
@@ -96,7 +97,7 @@ public sealed partial class MainWindow
         {
             NavKind.Active => found.Where(IsEffectivelyActive).ToList(),
             NavKind.Inactive => found.Where(f => !IsEffectivelyActive(f)).ToList(),
-            NavKind.Folder => found.Where(f => FolderGrouping.FolderOf(f.Info.Path).Equals(_nav.Key, StringComparison.OrdinalIgnoreCase)).ToList(),
+            NavKind.Folder => found.Where(f => FolderGrouping.GroupKeyOf(f.Info.Path).Equals(_nav.Key, StringComparison.OrdinalIgnoreCase)).ToList(),
             _ => found
         };
     }
@@ -276,7 +277,7 @@ public sealed partial class MainWindow
     private void RebuildNav()
     {
         _building = true;
-        double offset = SidebarScroll.VerticalOffset;
+        double offset = Scroller(NavList)?.VerticalOffset ?? 0;
         NavList.Items.Clear();
         _navRows.Clear();
         _stats = ComputeStats();
@@ -317,7 +318,7 @@ public sealed partial class MainWindow
             foreach (var g in _stats.Folders)
             {
                 var item = AddRow(new(NavKind.Folder, g.Display, 0, g.Key), g.Display, dot: true);
-                ToolTipService.SetToolTip(item, g.Key);
+                ToolTipService.SetToolTip(item, g.Key == FolderGrouping.SystemKey ? "Fonts installed in Windows" : g.Key);
             }
 
         AddHeader("TAGS");
@@ -330,7 +331,7 @@ public sealed partial class MainWindow
         foreach (var o in NavList.Items.OfType<ListViewItem>())
             if (o.Tag is NavEntry e && RowKey(e) == wanted) { NavList.SelectedItem = o; break; }
         _building = false;
-        if (offset > 0) RestoreScroll(SidebarScroll, offset);
+        if (offset > 0) RestoreScroll(NavList, offset);
     }
 
     private ListViewItem AddRow(NavEntry entry, string label, bool dot = false, bool interactive = true)
@@ -428,27 +429,34 @@ public sealed partial class MainWindow
         Refresh();
     }
 
-    // ------------------------------------------------------------------ scrolling on hover
+    // ------------------------------------------------------------------ memory
 
-    private const double EdgeZone = 60, MaxEdgeSpeed = 22;   // pixels from the edge; pixels per 16 ms tick at the very edge
-    private DispatcherTimer? _hoverTimer;
-    private FrameworkElement? _hoverList;
-    private double _hoverY;
+    private DispatcherTimer? _trimTimer;
 
-    /// <summary>While the mouse rests near the top or bottom edge of the font list or the sidebar, that list scrolls by itself. (The sidebar scrolls as a whole: search box, folders and the Add button.)</summary>
-    private void SetUpHoverScroll()
+    /// <summary>
+    /// A moment after the last big change (a view rebuilt, a scan finished) FontA hands back memory it no longer needs:
+    /// a full, compacting garbage collection, then the unused pages are returned to Windows. Windows pages back in
+    /// whatever is touched again, so this only costs a brief pause the first time something old is used.
+    /// </summary>
+    private void ScheduleMemoryTrim()
     {
-        foreach (var list in new FrameworkElement[] { FontGrid, SidebarScroll })
-        {
-            list.AddHandler(UIElement.PointerMovedEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler((s, e) =>
-            {
-                _hoverList = (FrameworkElement)s;
-                _hoverY = e.GetCurrentPoint(_hoverList).Position.Y;
-                if (_settings.HoverScroll) EnsureHoverTimer().Start();
-            }), handledEventsToo: true);
-            list.PointerExited += (_, _) => { _hoverList = null; _hoverTimer?.Stop(); };
-        }
+        _trimTimer ??= new DispatcherTimer { Interval = TimeSpan.FromSeconds(6) };
+        _trimTimer.Tick -= OnTrimTick;
+        _trimTimer.Tick += OnTrimTick;
+        _trimTimer.Stop(); _trimTimer.Start();
     }
+
+    private void OnTrimTick(object? s, object e)
+    {
+        _trimTimer?.Stop();
+        GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true, compacting: true);
+        try { SetProcessWorkingSetSize(System.Diagnostics.Process.GetCurrentProcess().Handle, -1, -1); } catch (Exception) { }
+    }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+    private static extern bool SetProcessWorkingSetSize(IntPtr process, IntPtr min, IntPtr max);
+
+    // ------------------------------------------------------------------ the mouse wheel
 
     private WheelHook? _wheelHook;
 
@@ -473,10 +481,10 @@ public sealed partial class MainWindow
             double x = pt.X / scale, y = pt.Y / scale;
             if (x < 0 || y < 0 || y >= root.ActualHeight) return false;
 
-            double side = SidebarScroll.ActualWidth;
+            double side = SidebarColumn.ActualWidth;
             ScrollViewer? target = null;
             double notch;
-            if (x < side) { target = SidebarScroll; notch = 76; }
+            if (x < side) { target = Scroller(NavList); notch = 76; }
             else if (x < side + MainColumn.ActualWidth) { target = Scroller(FontGrid); notch = 110; }
             else return false;
             if (target == null) return false;
@@ -499,6 +507,7 @@ public sealed partial class MainWindow
         long now = Environment.TickCount64;
         if (now - _lastWheelTick > 250 || !_wheelGoal.ContainsKey(sv)) _wheelGoal[sv] = sv.VerticalOffset;
         _lastWheelTick = now;
+        ScheduleMemoryTrim();
         double goal = Math.Clamp(_wheelGoal[sv] + pixels, 0, sv.ScrollableHeight);
         _wheelGoal[sv] = goal;
         DispatcherQueue.TryEnqueue(DispatcherQueuePriority.High, () => sv.ChangeView(null, goal, null, disableAnimation: true));
@@ -510,24 +519,6 @@ public sealed partial class MainWindow
     private struct WheelPoint { public int X, Y; }
     [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern bool ScreenToClient(IntPtr hwnd, ref WheelPoint p);
     [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
-
-    private DispatcherTimer EnsureHoverTimer()
-    {
-        if (_hoverTimer != null) return _hoverTimer;
-        _hoverTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
-        _hoverTimer.Tick += (_, _) =>
-        {
-            if (_hoverList is not { } list || !_settings.HoverScroll) { _hoverTimer!.Stop(); return; }
-            double height = list.ActualHeight, y = _hoverY, step = 0;
-            if (y < EdgeZone) step = -MaxEdgeSpeed * (1 - Math.Max(y, 0) / EdgeZone);
-            else if (y > height - EdgeZone) step = MaxEdgeSpeed * (1 - Math.Max(height - y, 0) / EdgeZone);
-            if (step == 0) return;
-            if (Environment.TickCount64 - _lastWheelTick < 700) return;   // the wheel is in use: edge scrolling would pull the list back
-            var sv = Scroller(list);
-            if (sv != null) sv.ChangeView(null, Math.Clamp(sv.VerticalOffset + step, 0, sv.ScrollableHeight), null, disableAnimation: true);
-        };
-        return _hoverTimer;
-    }
 
     // ------------------------------------------------------------------ scrolling helpers
 

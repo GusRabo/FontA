@@ -18,6 +18,9 @@
     <Version>0.1.0</Version>
     <ApplicationIcon>..\..\assets\fonta.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- Memory: no background garbage-collector thread/heap, and collect more eagerly. A font manager sits open all day. -->
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+    <TieredPGO>false</TieredPGO>
     <!-- Velopack must run before anything else in Main, so we supply Main ourselves (see Program.cs). -->
     <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
     <!-- GitHub repository FontA checks for updates. The release workflow also sets it from the repository it runs in. -->

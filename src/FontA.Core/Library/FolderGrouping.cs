@@ -6,6 +6,51 @@ public sealed record FolderGroup<T>(string Key, string Display, IReadOnlyList<T>
 /// <summary>Groups fonts by the folder their file is in, and names those folders the way a person would.</summary>
 public static class FolderGrouping
 {
+    /// <summary>The key of the one group that holds every font living in a Windows fonts folder.</summary>
+    public const string SystemKey = "system:";
+
+    /// <summary>
+    /// The folders Windows keeps its fonts in: the shared one (C:\Windows\Fonts) and the per-user one. Fonts in them are
+    /// shown together as "System" instead of under whatever the folder is called. Replaceable for tests.
+    /// </summary>
+    public static IReadOnlyList<string> SystemFontFolders { get; set; } = DefaultSystemFontFolders();
+
+    private static IReadOnlyList<string> DefaultSystemFontFolders()
+    {
+        var list = new List<string>();
+        try
+        {
+            var shared = Environment.GetFolderPath(Environment.SpecialFolder.Fonts);
+            if (!string.IsNullOrEmpty(shared)) list.Add(shared);
+            var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            if (!string.IsNullOrEmpty(local)) list.Add(Path.Combine(local, "Microsoft", "Windows", "Fonts"));
+        }
+        catch (Exception ex) when (ex is ArgumentException or PlatformNotSupportedException) { }
+        return list;
+    }
+
+    /// <summary>True when the folder is, or is inside, one of the Windows fonts folders.</summary>
+    public static bool IsSystemFolder(string folder)
+    {
+        foreach (var s in SystemFontFolders)
+        {
+            var root = s.TrimEnd('\\', '/');
+            if (folder.Equals(root, StringComparison.OrdinalIgnoreCase)
+                || folder.StartsWith(root + "\\", StringComparison.OrdinalIgnoreCase)) return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// The group a font file belongs to: its folder, except that every font in a Windows fonts folder is in the one
+    /// <see cref="SystemKey"/> group.
+    /// </summary>
+    public static string GroupKeyOf(string fontPath)
+    {
+        var folder = FolderOf(fontPath);
+        return IsSystemFolder(folder) ? SystemKey : folder;
+    }
+
     /// <summary>The folder containing a font file, normalised (no trailing separator, except for a drive root).</summary>
     public static string FolderOf(string fontPath)
     {
@@ -20,6 +65,7 @@ public static class FolderGrouping
     /// </summary>
     public static string Display(string folder, IReadOnlyList<string> roots)
     {
+        if (folder == SystemKey) return "System";
         if (folder.Length == 0) return "(unknown)";
         return Leaf(folder);
     }
@@ -39,7 +85,7 @@ public static class FolderGrouping
         var byFolder = new Dictionary<string, List<T>>(StringComparer.OrdinalIgnoreCase);
         foreach (var item in items)
         {
-            var key = FolderOf(pathOf(item));
+            var key = GroupKeyOf(pathOf(item));
             if (!byFolder.TryGetValue(key, out var list)) byFolder[key] = list = new List<T>();
             list.Add(item);
         }
@@ -47,7 +93,8 @@ public static class FolderGrouping
         var named = byFolder.Select(kv => (Key: kv.Key, Display: Display(kv.Key, roots), Items: kv.Value)).ToList();
 
         return named
-            .OrderBy(n => n.Display, Comparer<string>.Create(NaturalCompare))
+            .OrderBy(n => n.Key == SystemKey ? 0 : 1)                       // "System" first, then the rest by name
+            .ThenBy(n => n.Display, Comparer<string>.Create(NaturalCompare))
             .ThenBy(n => n.Key, StringComparer.OrdinalIgnoreCase)
             .Select(n => new FolderGroup<T>(n.Key, n.Display, n.Items))
             .ToList();
