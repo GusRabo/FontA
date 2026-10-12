@@ -38,6 +38,9 @@ public sealed class AppSettings
         set => _lib.SetSetting("activation.msPerFont", Math.Clamp(value, 1, 10_000).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture));
     }
 
+    /// <summary>Lists scroll by themselves while the mouse rests near their top or bottom edge.</summary>
+    public bool HoverScroll { get => Get("ui.hoverScroll", true); set => Set("ui.hoverScroll", value); }
+
     /// <summary>Use the light colour scheme instead of the default dark one.</summary>
     public bool LightTheme { get => Get("ui.lightTheme", false); set => Set("ui.lightTheme", value); }
 

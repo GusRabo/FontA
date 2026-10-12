@@ -18,8 +18,8 @@ public class FolderTests
 
     [Theory]
     [InlineData(@"C:\Fonts", "Fonts")]                          // an added folder shows as itself
-    [InlineData(@"C:\Fonts\2009", "2009")]                      // a folder inside shows its path from there
-    [InlineData(@"C:\Fonts\Display\Bold", @"Display\Bold")]
+    [InlineData(@"C:\Fonts\2009", "2009")]                      // a folder inside shows only its own name
+    [InlineData(@"C:\Fonts\Display\Bold", "Bold")]              // never the path
     [InlineData(@"c:\fonts\2010", "2010")]                      // case-insensitive
     [InlineData(@"D:\Elsewhere\Pack", "Pack")]                  // outside every added folder: its own name
     [InlineData(@"C:\", @"C:\")]                                // a drive root has no name
@@ -28,12 +28,12 @@ public class FolderTests
         Assert.Equal(expected, FolderGrouping.Display(folder, new[] { @"C:\Fonts" }));
 
     [Fact]
-    public void The_closest_added_folder_decides_the_name()
+    public void A_folder_is_named_by_itself_whatever_folders_were_added()
     {
         var roots = new[] { @"C:\Fonts", @"C:\Fonts\Client" };
         Assert.Equal("Client", FolderGrouping.Display(@"C:\Fonts\Client", roots));
         Assert.Equal("2020", FolderGrouping.Display(@"C:\Fonts\Client\2020", roots));   // not "Client\2020"
-        Assert.Equal(@"Client2", FolderGrouping.Display(@"C:\Fonts\Client2", roots));   // a look-alike prefix is not "inside"
+        Assert.Equal("Client2", FolderGrouping.Display(@"C:\Fonts\Client2", roots));
     }
 
     [Fact]
@@ -47,7 +47,7 @@ public class FolderTests
     }
 
     [Fact]
-    public void Fonts_are_grouped_by_folder_in_natural_order_with_unique_names()
+    public void Fonts_are_grouped_by_folder_in_natural_order_and_same_named_folders_stay_separate()
     {
         var roots = new[] { @"C:\Fonts", @"D:\More" };
         var paths = new[]
@@ -58,7 +58,7 @@ public class FolderTests
         };
         var groups = FolderGrouping.Group(paths, p => p, roots);
 
-        Assert.Equal(new[] { "2009", "2010 (Fonts)", "2010 (More)", "Fonts", "Loose" }, groups.Select(g => g.Display).ToArray());
+        Assert.Equal(new[] { "2009", "2010", "2010", "Fonts", "Loose" }, groups.Select(g => g.Display).ToArray());
         Assert.Equal(2, groups.Single(g => g.Display == "2009").Items.Count);
         Assert.Equal(paths.Length, groups.Sum(g => g.Items.Count));          // every font lands in exactly one group
         Assert.Equal(groups.Count, groups.Select(g => g.Key).Distinct(StringComparer.OrdinalIgnoreCase).Count());

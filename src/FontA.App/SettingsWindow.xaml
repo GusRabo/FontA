@@ -21,6 +21,11 @@
         <TextBlock Text="Watch folders for changes" VerticalAlignment="Center"/>
         <ToggleSwitch x:Name="WatchToggle" Grid.Column="1" OnContent="" OffContent="" MinWidth="0" Toggled="OnToggled"/>
       </Grid>
+      <Grid Margin="0,8,0,0">
+        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+        <TextBlock Text="Scroll when the mouse rests at the top or bottom edge of a list" VerticalAlignment="Center" TextWrapping="Wrap"/>
+        <ToggleSwitch x:Name="HoverScrollToggle" Grid.Column="1" OnContent="" OffContent="" MinWidth="0" Toggled="OnToggled"/>
+      </Grid>
 
       <Rectangle Height="1" Fill="{ThemeResource DividerStrokeColorDefaultBrush}" Margin="0,12"/>
 

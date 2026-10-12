@@ -100,6 +100,12 @@ public sealed partial class MainWindow : Window
         _ = ActivateAlwaysActiveAsync();
         _ = PruneMissingInBackground();
         RegisterShortcuts();
+        SetUpHoverScroll();
+        ((FrameworkElement)Content).Loaded += (_, _) =>
+        {
+            UpdateScale();
+            Content.XamlRoot.Changed += (_, _) => UpdateScale();
+        };
 
         UpdateTrayVisibility();
         StartUpdateChecks();
@@ -317,6 +323,16 @@ public sealed partial class MainWindow : Window
         foreach (var item in AllItems) item.ApplyListSize();
     }
 
+    /// <summary>Draws thumbnails at the display's real pixel density (also when the window moves to another monitor).</summary>
+    private void UpdateScale()
+    {
+        double s = Content.XamlRoot?.RasterizationScale ?? 1;
+        s = Math.Round(Math.Clamp(s, 1, 3) * 4) / 4;      // quarter steps: fewer distinct cache entries
+        if (Math.Abs(s - FontItem.Scale) < 0.01) return;
+        FontItem.Scale = s;
+        foreach (var item in AllItems) item.ApplyListSize();
+    }
+
     private void OnResetListSize(object s, RoutedEventArgs e) => ListSizeSlider.Value = FontItem.DefaultListSize;
 
     private void OnToggleTheme(object s, RoutedEventArgs e)
@@ -531,10 +547,11 @@ public sealed partial class MainWindow : Window
     {
         if (_building || _selected == null) return;
         var info = _selected.Info;
-        int w = 308, h = 240;
+        double scale = FontItem.Scale;       // sharp on high-density displays
+        int w = (int)Math.Round(308 * scale), h = (int)Math.Round(240 * scale);
         bool dark = ((FrameworkElement)Content).ActualTheme == ElementTheme.Dark;
         var ink = dark ? new Vortice.Mathematics.Color4(1f, 1f, 1f, 1f) : new Vortice.Mathematics.Color4(0f, 0f, 0f, 1f);
-        var bytes = _renderer.Render(new PreviewRequest(info.Path, info.Family, SampleBox.Text, (float)SizeSlider.Value, w, h,
+        var bytes = _renderer.Render(new PreviewRequest(info.Path, info.Family, SampleBox.Text, (float)(SizeSlider.Value * scale), w, h,
             _axisValues.Count > 0 ? new Dictionary<string, float>(_axisValues) : null,
             _features.Count > 0 ? _features.ToList() : null, info.Weight, info.IsItalic), ink);
         var bmp = new WriteableBitmap(w, h);

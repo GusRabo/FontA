@@ -32,6 +32,7 @@ public sealed partial class SettingsWindow : Window
     {
         RescanToggle.IsOn = _settings.RescanOnStartup;
         WatchToggle.IsOn = _settings.WatchFolders;
+        HoverScrollToggle.IsOn = _settings.HoverScroll;
         TrayToggle.IsOn = _settings.HideToTray;
         StartToggle.IsOn = _settings.StartWithWindows;
         HiddenToggle.IsOn = _settings.StartHidden;
@@ -52,6 +53,7 @@ public sealed partial class SettingsWindow : Window
 
         if (toggle == RescanToggle) _settings.RescanOnStartup = on;
         else if (toggle == WatchToggle) _settings.WatchFolders = on;
+        else if (toggle == HoverScrollToggle) _settings.HoverScroll = on;
         else if (toggle == TrayToggle) _settings.HideToTray = on;
         else if (toggle == StartToggle) _settings.StartWithWindows = on;
         else if (toggle == HiddenToggle) _settings.StartHidden = on;

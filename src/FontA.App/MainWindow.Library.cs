@@ -428,6 +428,45 @@ public sealed partial class MainWindow
         Refresh();
     }
 
+    // ------------------------------------------------------------------ scrolling on hover
+
+    private const double EdgeZone = 60, MaxEdgeSpeed = 22;   // pixels from the edge; pixels per 16 ms tick at the very edge
+    private DispatcherTimer? _hoverTimer;
+    private ListViewBase? _hoverList;
+    private double _hoverY;
+
+    /// <summary>While the mouse rests near the top or bottom edge of the font list or the sidebar, that list scrolls by itself.</summary>
+    private void SetUpHoverScroll()
+    {
+        foreach (var list in new ListViewBase[] { FontGrid, NavList })
+        {
+            list.AddHandler(UIElement.PointerMovedEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler((s, e) =>
+            {
+                _hoverList = (ListViewBase)s;
+                _hoverY = e.GetCurrentPoint(_hoverList).Position.Y;
+                if (_settings.HoverScroll) EnsureHoverTimer().Start();
+            }), handledEventsToo: true);
+            list.PointerExited += (_, _) => { _hoverList = null; _hoverTimer?.Stop(); };
+        }
+    }
+
+    private DispatcherTimer EnsureHoverTimer()
+    {
+        if (_hoverTimer != null) return _hoverTimer;
+        _hoverTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
+        _hoverTimer.Tick += (_, _) =>
+        {
+            if (_hoverList is not { } list || !_settings.HoverScroll) { _hoverTimer!.Stop(); return; }
+            double height = list.ActualHeight, y = _hoverY, step = 0;
+            if (y < EdgeZone) step = -MaxEdgeSpeed * (1 - Math.Max(y, 0) / EdgeZone);
+            else if (y > height - EdgeZone) step = MaxEdgeSpeed * (1 - Math.Max(height - y, 0) / EdgeZone);
+            if (step == 0) return;
+            var sv = Scroller(list);
+            if (sv != null) sv.ChangeView(null, Math.Clamp(sv.VerticalOffset + step, 0, sv.ScrollableHeight), null, disableAnimation: true);
+        };
+        return _hoverTimer;
+    }
+
     // ------------------------------------------------------------------ scrolling helpers
 
     private static ScrollViewer? Scroller(DependencyObject root)

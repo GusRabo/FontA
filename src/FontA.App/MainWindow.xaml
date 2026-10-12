@@ -93,7 +93,8 @@
             </GroupStyle.HeaderContainerStyle>
             <GroupStyle.HeaderTemplate>
               <DataTemplate x:DataType="local:FontGroup">
-                <Grid Padding="8,16,8,4" ColumnSpacing="6" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+                <Grid Padding="8,16,8,4" ColumnSpacing="6" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}"
+                      ToolTipService.ToolTip="{x:Bind Key}">
                   <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/>
                   </Grid.ColumnDefinitions>
@@ -132,7 +133,7 @@
                 </Button>
               </Grid>
               <Image Grid.Row="1" Source="{x:Bind Thumbnail, Mode=OneWay}" Height="{x:Bind RowThumbHeight, Mode=OneWay}"
-                     Stretch="None" HorizontalAlignment="Left" Margin="6,0,0,0"/>
+                     Width="1400" Stretch="Fill" HorizontalAlignment="Left" Margin="6,0,0,0"/>
               <TextBlock Grid.Row="2" Text="File missing. Rescan the folder to remove it." Visibility="{x:Bind MissingVisibility, Mode=OneWay}"
                          Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource SystemFillColorCriticalBrush}"/>
             </Grid>
@@ -147,7 +148,7 @@
       <ScrollViewer Padding="16">
         <StackPanel Spacing="10">
           <TextBlock x:Name="PreviewTitle" Text="Select a font" Style="{StaticResource SubtitleTextBlockStyle}" TextWrapping="Wrap"/>
-          <Image x:Name="PreviewImage" Stretch="None" HorizontalAlignment="Left"/>
+          <Image x:Name="PreviewImage" Width="308" Height="240" Stretch="Fill" HorizontalAlignment="Left"/>
           <Slider x:Name="SizeSlider" Header="Size" Minimum="12" Maximum="160" Value="48" ValueChanged="OnPreviewParamChanged"/>
           <Button x:Name="InstallButton" Content="Install" Click="OnInstallSelected"
                   ToolTipService.ToolTip="Install for your Windows account so it stays available without FontA (Ctrl+Shift+I)"/>

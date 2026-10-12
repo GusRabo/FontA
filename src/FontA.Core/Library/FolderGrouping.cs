@@ -15,24 +15,13 @@ public static class FolderGrouping
     }
 
     /// <summary>
-    /// A short, readable name for a folder. A folder you added shows as its own name ("Fonts"); a folder inside one
-    /// shows its path from there ("2009", or "Display\Bold"). Anything outside every added folder shows its own name.
+    /// A folder's name is just that: the name of the folder ("Fonts", "2009", "Bold"), never a path and never anything
+    /// taken from the fonts inside it. Hovering a folder in the app shows where it is.
     /// </summary>
     public static string Display(string folder, IReadOnlyList<string> roots)
     {
         if (folder.Length == 0) return "(unknown)";
-        string? best = null;
-        foreach (var root in roots)
-        {
-            var r = root.TrimEnd('\\', '/');
-            bool inside = folder.Equals(r, StringComparison.OrdinalIgnoreCase)
-                          || folder.StartsWith(r + "\\", StringComparison.OrdinalIgnoreCase);
-            if (inside && (best == null || r.Length > best.Length)) best = r;   // the closest added folder wins
-        }
-
-        if (best == null) return Leaf(folder);
-        if (folder.Equals(best, StringComparison.OrdinalIgnoreCase)) return Leaf(best);
-        return folder[(best.Length + 1)..];
+        return Leaf(folder);
     }
 
     private static string Leaf(string folder)
@@ -42,8 +31,8 @@ public static class FolderGrouping
     }
 
     /// <summary>
-    /// Groups items by folder, ordered by display name with numbers in natural order (2 before 10). If two different
-    /// folders would show the same name, the name of the folder above is added so they can be told apart.
+    /// Groups items by folder, ordered by name with numbers in natural order (2 before 10). Two different folders with
+    /// the same name stay separate groups (ordered by path); hovering shows which is which.
     /// </summary>
     public static IReadOnlyList<FolderGroup<T>> Group<T>(IEnumerable<T> items, Func<T, string> pathOf, IReadOnlyList<string> roots)
     {
@@ -56,12 +45,6 @@ public static class FolderGrouping
         }
 
         var named = byFolder.Select(kv => (Key: kv.Key, Display: Display(kv.Key, roots), Items: kv.Value)).ToList();
-        foreach (var dup in named.GroupBy(n => n.Display, StringComparer.OrdinalIgnoreCase).Where(g => g.Count() > 1).SelectMany(g => g).ToList())
-        {
-            var parent = Path.GetFileName(Path.GetDirectoryName(dup.Key.TrimEnd('\\', '/')) ?? "");
-            if (parent.Length == 0) continue;
-            named[named.IndexOf(dup)] = (dup.Key, $"{dup.Display} ({parent})", dup.Items);
-        }
 
         return named
             .OrderBy(n => n.Display, Comparer<string>.Create(NaturalCompare))

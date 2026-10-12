@@ -20,6 +20,9 @@ public sealed class FontItem : INotifyPropertyChanged
     public static int ListSize { get; set; } = DefaultListSize;
     public static int ThumbHeight => (int)Math.Ceiling(ListSize * 1.5);
 
+    /// <summary>Screen pixels per layout unit (1, 1.25, 1.5, 2...). Changing it: call <see cref="ApplyListSize"/> on the cards.</summary>
+    public static double Scale { get; set; } = 1;
+
     /// <summary>Bounds queued thumbnail work; slightly above the renderer count so the pool never idles.</summary>
     private static readonly SemaphoreSlim Gate = new(ThumbnailCache.DefaultParallelism + 2);
     /// <summary>0 = black ink (light theme), 255 = white ink (dark theme).</summary>
@@ -107,9 +110,11 @@ public sealed class FontItem : INotifyPropertyChanged
         var cts = _loading = new CancellationTokenSource();
         var text = _sample;
         var info = _font.Info;
-        int h = ThumbHeight;
+        // Drawn at the screen's real pixel density (1.5x on a 150% display), so the text is sharp rather than stretched.
+        double scale = Scale;
+        int w = (int)Math.Round(ThumbWidth * scale), h = (int)Math.Round(ThumbHeight * scale);
         var req = new ThumbnailRequest(info.Path, info.FaceIndex, info.Family, info.Weight, info.IsItalic,
-            Stamp(), text, ListSize, ThumbWidth, h);
+            Stamp(), text, (float)(ListSize * scale), w, h);
 
         _ = Task.Run(async () =>
         {
@@ -128,7 +133,7 @@ public sealed class FontItem : INotifyPropertyChanged
                 _ui.TryEnqueue(() =>
                 {
                     if (cts.IsCancellationRequested) return;
-                    _thumb = Tint(mask, h);
+                    _thumb = Tint(mask, w, h);
                     Raise(nameof(Thumbnail));
                 });
             }
@@ -142,7 +147,7 @@ public sealed class FontItem : INotifyPropertyChanged
         });
     }
 
-    private static WriteableBitmap Tint(byte[] mask, int height)
+    private static WriteableBitmap Tint(byte[] mask, int width, int height)
     {
         var px = new byte[mask.Length * 4];
         byte ink = InkLevel;
@@ -153,7 +158,7 @@ public sealed class FontItem : INotifyPropertyChanged
             px[i * 4] = px[i * 4 + 1] = px[i * 4 + 2] = c;
             px[i * 4 + 3] = a;
         }
-        var bmp = new WriteableBitmap(ThumbWidth, height);
+        var bmp = new WriteableBitmap(width, height);
         px.CopyTo(0, bmp.PixelBuffer, 0, px.Length);
         bmp.Invalidate();
         return bmp;
