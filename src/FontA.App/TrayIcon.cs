@@ -5,10 +5,33 @@ using System.Runtime.InteropServices;
 
 namespace FontA.App;
 
-/// <summary>Draws FontA's icon at runtime (a bold "A" on a tile) so the app needs no image assets.</summary>
+/// <summary>
+/// FontA's icon for the tray and the window: the logo from fonta.ico next to the app (all sizes, so it stays sharp).
+/// If that file is missing it draws a plain "A" tile instead, so the app never starts without an icon.
+/// </summary>
 internal static class AppIcon
 {
+    private static string BundledPath => Path.Combine(AppContext.BaseDirectory, "fonta.ico");
+
     public static Icon Create(int size = 32)
+    {
+        // Windows picks the right size from the file and understands its PNG-compressed pictures (System.Drawing doesn't reliably).
+        if (File.Exists(BundledPath))
+        {
+            var handle = LoadImage(IntPtr.Zero, BundledPath, 1 /* IMAGE_ICON */, size, size, 0x10 /* LR_LOADFROMFILE */);
+            if (handle != IntPtr.Zero)
+            {
+                try { return (Icon)Icon.FromHandle(handle).Clone(); }
+                finally { DestroyIcon(handle); }
+            }
+        }
+        return Draw(size);
+    }
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern IntPtr LoadImage(IntPtr hInst, string name, uint type, int cx, int cy, uint flags);
+
+    private static Icon Draw(int size)
     {
         using var bmp = new Bitmap(size, size);
         using (var g = Graphics.FromImage(bmp))
@@ -33,7 +56,8 @@ internal static class AppIcon
     {
         try
         {
-            using var icon = Create(32);
+            if (File.Exists(BundledPath)) { File.Copy(BundledPath, path, overwrite: true); return path; }   // every size, for the taskbar and Alt+Tab
+            using var icon = Draw(32);
             using var fs = File.Create(path);
             icon.Save(fs);
             return path;

@@ -1,30 +1,21 @@
 <#
-  Regenerates assets/fonta.ico (a bold "A" on a purple tile, 16 to 256 px). Run it only if you want to change the icon;
-  the generated file is committed. Matches the icon FontA draws for its tray (see AppIcon in src/FontA.App/TrayIcon.cs).
+  Regenerates assets/fonta.ico (16 to 256 px) from the master picture assets/fonta-icon.png, which is a render of
+  assets/fonta-icon.svg (the FontA logo without its tagline). Run it only if you change the icon; the generated file is
+  committed. The app and the installer both use assets/fonta.ico.
 #>
 Add-Type -AssemblyName System.Drawing
 
-$sizes = 16, 24, 32, 48, 64, 128, 256
+$sizes = 16, 20, 24, 32, 40, 48, 64, 128, 256
+$master = Join-Path $PSScriptRoot '..\assets\fonta-icon.png'
 $out = Join-Path $PSScriptRoot '..\assets\fonta.ico'
-New-Item -ItemType Directory -Force (Split-Path $out) | Out-Null
+$src = [System.Drawing.Image]::FromFile((Resolve-Path $master))
 
 function New-Png([int]$size) {
-    $bmp = New-Object System.Drawing.Bitmap $size, $size
+    $bmp = New-Object System.Drawing.Bitmap $size, $size, ([System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
     $g = [System.Drawing.Graphics]::FromImage($bmp)
-    $g.SmoothingMode = 'AntiAlias'
-    $g.TextRenderingHint = 'AntiAliasGridFit'
-    $r = $size * 0.22; $d = $r * 2
-    $path = New-Object System.Drawing.Drawing2D.GraphicsPath
-    $path.AddArc(0, 0, $d, $d, 180, 90)
-    $path.AddArc($size - $d, 0, $d, $d, 270, 90)
-    $path.AddArc($size - $d, $size - $d, $d, $d, 0, 90)
-    $path.AddArc(0, $size - $d, $d, $d, 90, 90)
-    $path.CloseFigure()
-    $g.FillPath((New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(0x5B, 0x0A, 0xF0))), $path)
-    $font = New-Object System.Drawing.Font 'Segoe UI', ([single]($size * 0.58)), ([System.Drawing.FontStyle]::Bold), ([System.Drawing.GraphicsUnit]::Pixel)
-    $fmt = New-Object System.Drawing.StringFormat
-    $fmt.Alignment = 'Center'; $fmt.LineAlignment = 'Center'
-    $g.DrawString('A', $font, [System.Drawing.Brushes]::White, (New-Object System.Drawing.RectangleF 0, ($size * 0.02), $size, $size), $fmt)
+    $g.InterpolationMode = 'HighQualityBicubic'; $g.SmoothingMode = 'HighQuality'; $g.PixelOffsetMode = 'HighQuality'
+    $g.Clear([System.Drawing.Color]::Transparent)
+    $g.DrawImage($src, 0, 0, $size, $size)
     $g.Dispose()
     $ms = New-Object System.IO.MemoryStream
     $bmp.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
@@ -34,6 +25,7 @@ function New-Png([int]$size) {
 
 # ICO container with PNG-compressed images (supported by Windows Vista and later).
 $images = foreach ($s in $sizes) { , (New-Png $s) }
+$src.Dispose()
 $fs = [System.IO.File]::Create($out)
 $w = New-Object System.IO.BinaryWriter $fs
 $w.Write([uint16]0); $w.Write([uint16]1); $w.Write([uint16]$sizes.Count)

@@ -26,6 +26,10 @@
     <AssemblyMetadata Include="UpdateRepoUrl" Value="$(UpdateRepoUrl)" />
   </ItemGroup>
   <ItemGroup>
+    <!-- Shipped next to the app so the tray and window icons are the same logo as the exe's icon. -->
+    <Content Include="..\..\assets\fonta.ico" Link="fonta.ico" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.6.250228001" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.1742" />
     <PackageReference Include="System.Drawing.Common" Version="8.0.10" />
