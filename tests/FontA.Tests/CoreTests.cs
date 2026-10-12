@@ -391,8 +391,9 @@ public class CoreTests
             lib.SetSetting("unused.days", "45");
             lib.SetSetting("unused.days", "60");
             Assert.Equal("60", lib.GetSetting("unused.days"));
-            Assert.Equal(1, lib.InitializeUsage(DateTimeOffset.UtcNow));     // the pre-existing row had no usage record
-            Assert.Equal(0, lib.InitializeUsage(DateTimeOffset.UtcNow));
+            Assert.Equal(0, lib.InitializeUsage(DateTimeOffset.UtcNow));     // inactive fonts get no clock: they can't be auto-deactivated
+            Assert.Equal(1, lib.InitializeUsage(DateTimeOffset.UtcNow, new[] { "a.ttf" }));   // an active one does
+            Assert.Equal(0, lib.InitializeUsage(DateTimeOffset.UtcNow, new[] { "a.ttf" }));   // and only once
         }
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
         Directory.Delete(dir, true);

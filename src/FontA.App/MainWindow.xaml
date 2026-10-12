@@ -42,7 +42,7 @@
       <Button x:Name="ScanCancel" Grid.Column="1" Content="Cancel" VerticalAlignment="Bottom" Click="OnCancelScan"/>
     </Grid>
     <Grid Grid.Row="3">
-    <Grid.ColumnDefinitions><ColumnDefinition Width="220"/><ColumnDefinition Width="*"/><ColumnDefinition Width="400"/></Grid.ColumnDefinitions>
+    <Grid.ColumnDefinitions><ColumnDefinition Width="280"/><ColumnDefinition Width="*"/><ColumnDefinition Width="400"/></Grid.ColumnDefinitions>
     <Grid Background="{ThemeResource LayerFillColorDefaultBrush}">
       <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
       <ListView x:Name="NavList" SelectionChanged="OnNavChanged"/>
@@ -50,18 +50,44 @@
               ToolTipService.ToolTip="New collection (Ctrl+N)"/>
     </Grid>
     <GridView x:Name="FontGrid" Grid.Column="1" Padding="12" SelectionMode="Single" SelectionChanged="OnFontSelected"
+              IsSynchronizedWithCurrentItem="False"
               ContainerContentChanging="OnContainerChanging">
+      <GridView.GroupStyle>
+        <GroupStyle HidesIfEmpty="True">
+          <GroupStyle.HeaderTemplate>
+            <DataTemplate x:DataType="local:FontGroup" xmlns:local="using:FontA.App">
+              <Grid Padding="4,18,4,6" ColumnSpacing="8">
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <local:ActivationDot State="{x:Bind ActiveState, Mode=OneWay}" Click="OnGroupDotClick"/>
+                <TextBlock Grid.Column="1" Text="{x:Bind Display}" Style="{StaticResource SubtitleTextBlockStyle}" VerticalAlignment="Center"/>
+                <TextBlock Grid.Column="2" Text="{x:Bind CountText, Mode=OneWay}" Opacity="0.6" VerticalAlignment="Center"
+                           Margin="6,3,0,0"/>
+              </Grid>
+            </DataTemplate>
+          </GroupStyle.HeaderTemplate>
+          <GroupStyle.Panel>
+            <ItemsPanelTemplate><ItemsWrapGrid Orientation="Horizontal"/></ItemsPanelTemplate>
+          </GroupStyle.Panel>
+        </GroupStyle>
+      </GridView.GroupStyle>
       <GridView.ItemTemplate>
         <DataTemplate x:DataType="local:FontItem" xmlns:local="using:FontA.App">
           <StackPanel Width="320" Padding="12" Spacing="4"
                       Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
-            <TextBlock Text="{x:Bind Title}" Style="{StaticResource CaptionTextBlockStyle}" Opacity="0.7"/>
+            <Grid ColumnSpacing="4">
+              <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+              <local:ActivationDot State="{x:Bind ActiveState, Mode=OneWay}" IsEnabled="{x:Bind CanToggle, Mode=OneWay}"
+                                   Click="OnCardDotClick"/>
+              <TextBlock Grid.Column="1" Text="{x:Bind Title}" Style="{StaticResource CaptionTextBlockStyle}" Opacity="0.7"
+                         VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+            </Grid>
             <Image Source="{x:Bind Thumbnail, Mode=OneWay}" Width="296" Height="64" Stretch="None"
                    HorizontalAlignment="Left"/>
             <TextBlock Text="File missing. Rescan the folder to remove it." Visibility="{x:Bind MissingVisibility, Mode=OneWay}"
                        Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource SystemFillColorCriticalBrush}"/>
             <StackPanel Orientation="Horizontal" Spacing="8">
-              <ToggleButton Content="Active" IsChecked="{x:Bind IsActive, Mode=TwoWay}" IsEnabled="{x:Bind CanToggle, Mode=OneWay}"/>
               <ToggleButton Content="★" IsChecked="{x:Bind IsFavorite, Mode=TwoWay}" ToolTipService.ToolTip="Favorite (Ctrl+D)"/>
               <ToggleButton Content="Always" IsChecked="{x:Bind IsAlwaysActive, Mode=TwoWay}" IsEnabled="{x:Bind CanToggle, Mode=OneWay}"
                             ToolTipService.ToolTip="Activate automatically every time FontA starts, and keep active after it closes"/>

@@ -16,7 +16,6 @@ public sealed partial class MainWindow : Window
     private readonly FontLibrary _lib;
     private readonly FontActivator _activator = new();
     private readonly FontInstaller _installer = new();
-    private ObservableCollection<FontItem> _items = new();
     private readonly FontPreviewRenderer _renderer = new();
     private readonly ThumbnailCache _thumbs;
     private FontItem? _selected;
@@ -27,21 +26,21 @@ public sealed partial class MainWindow : Window
     private CancellationTokenSource? _pruneCts;
     private int _liveIndexed;
     private long _nextLiveRefresh;
-    private NavEntry _nav = new(NavKind.All, "All fonts");
+    
     private readonly AppSettings _settings;
     private readonly StartupRegistration _startup = new();
     private readonly TrayIcon _tray;
     private readonly FolderWatcher _watcher;
     private SettingsWindow? _settingsWindow;
     private bool _quitting;
+    private readonly ActiveSessionJournal _journal;
+    private System.Threading.Timer? _journalTimer;
+    private readonly object _journalGate = new();
     private readonly UpdateService _updates = new();
     private bool _restartAfterExit;
     private bool _checkingForUpdates;
     private readonly Queue<(string Path, bool Quiet)> _scanQueue = new();
     private bool _scanQueueRunning;
-
-    private enum NavKind { All, Favorites, AlwaysActive, Installed, Collection, Tag }
-    private sealed record NavEntry(NavKind Kind, string Label, long Id = 0);
 
     public MainWindow()
     {
@@ -50,6 +49,10 @@ public sealed partial class MainWindow : Window
         Directory.CreateDirectory(dir);
         _lib = new FontLibrary(Path.Combine(dir, "library.db"));
         _settings = new AppSettings(_lib);
+        _journal = new ActiveSessionJournal(Path.Combine(dir, "active-fonts.txt"));
+        // If an earlier run was killed or crashed, Windows still has its fonts switched on: pick them up so they show as active.
+        _activator.Adopt(_journal.LoadIfSameSession());
+        _activator.Changed += ScheduleJournalSave;
         _thumbs = new ThumbnailCache(Path.Combine(dir, "thumbs"));
         _thumbs.Prune(TimeSpan.FromDays(60));
         ShouldStartHidden = _settings.StartHidden && Environment.GetCommandLineArgs().Contains(StartupRegistration.AutoStartArgument);
@@ -67,12 +70,19 @@ public sealed partial class MainWindow : Window
             CancelQuietly(_scanCts); CancelQuietly(_pruneCts);
             _settingsWindow?.Close();
             _watcher.Dispose(); _tray.Dispose();
+            // An activation still running would keep adding fonts after the clean-up below has looked at what is active.
+            CancelQuietly(_activationCts);
+            try { _activationTask?.Wait(TimeSpan.FromSeconds(10)); } catch (AggregateException) { }
             if (_settings.DeactivateOnExit) _activator.DeactivateExcept(_lib.AlwaysActivePaths());
+            _journal.Save(_activator.Active);   // what is still on after the clean-up (the "Always" fonts), written once more for certain
+            lock (_journalGate) { _journalTimer?.Dispose(); _journalTimer = null; }
             // A downloaded update installs once this process is gone: restarting if the person chose "Restart now".
+            FontItem.ActivationChanged -= OnItemActivationChanged;
             _updates.ApplyWhenExited(_restartAfterExit);
             _lib.Dispose(); _renderer.Dispose(); _thumbs.Dispose();
         };
         ((FrameworkElement)Content).ActualThemeChanged += (_, _) => Refresh();
+        FontItem.ActivationChanged += OnItemActivationChanged;
 
         // Keep "start with Windows" pointing at wherever this copy of the app now lives (it moves when you update it).
         try { if (_settings.StartWithWindows && Environment.ProcessPath is { } exe) _startup.RefreshPath(exe); }
@@ -81,9 +91,9 @@ public sealed partial class MainWindow : Window
         var unusedTimer = new Microsoft.UI.Xaml.DispatcherTimer { Interval = TimeSpan.FromHours(1) };
         unusedTimer.Tick += (_, _) => RunUnusedCheck(manual: false, refresh: true);
         unusedTimer.Start();
-        _activator.ActivateMany(_lib.AlwaysActivePaths());
         RebuildNav();
         Refresh();
+        _ = ActivateAlwaysActiveAsync();
         _ = PruneMissingInBackground();
         RegisterShortcuts();
 
@@ -115,6 +125,16 @@ public sealed partial class MainWindow : Window
 
     /// <summary>True when Windows started FontA at sign-in and the person asked for it to stay out of sight.</summary>
     public bool ShouldStartHidden { get; }
+
+    /// <summary>Rewrites the journal soon after fonts were switched, grouping a burst of changes into one write.</summary>
+    private void ScheduleJournalSave()
+    {
+        lock (_journalGate)
+        {
+            _journalTimer ??= new System.Threading.Timer(_ => _journal.Save(_activator.Active), null, Timeout.Infinite, Timeout.Infinite);
+            _journalTimer.Change(500, Timeout.Infinite);
+        }
+    }
 
     // A scan or check can finish (and dispose its token source) at the very moment the window closes.
     private static void CancelQuietly(CancellationTokenSource? cts)
@@ -263,58 +283,8 @@ public sealed partial class MainWindow : Window
         Refresh();
     }
 
-    /// <summary>
-    /// Re-queries the library for the current view. A full refresh swaps in fresh items (new tint, scroll resets);
-    /// an incremental one keeps existing items and inserts only new ones, so scroll position, selection and
-    /// already-loaded thumbnails survive. It falls back to a full refresh when the change isn't a small pure insertion.
-    /// </summary>
-    private void Refresh(bool incremental = false)
-    {
-        var found = _lib.Search(SearchBox.Text,
-            _nav.Kind == NavKind.Favorites,
-            _nav.Kind == NavKind.Tag ? _nav.Label : null,
-            _nav.Kind == NavKind.Collection ? _nav.Id : null,
-            _nav.Kind == NavKind.AlwaysActive,
-            _nav.Kind == NavKind.Installed);
-        FontItem.InkLevel = ((FrameworkElement)Content).ActualTheme == ElementTheme.Dark ? (byte)255 : (byte)0;
-
-        if (incremental && TryInsertNew(found)) return;
-
-        _items = new ObservableCollection<FontItem>(
-            found.Select(f => new FontItem(f, _lib, _activator, _thumbs, _installer, SampleBox.Text)));
-        FontGrid.ItemsSource = _items;
-    }
-
-    private bool TryInsertNew(IReadOnlyList<LibraryFont> found)
-    {
-        const int MaxInline = 200;
-        var position = new Dictionary<long, int>(found.Count);
-        for (int i = 0; i < found.Count; i++) position[found[i].Id] = i;
-
-        // Every current item must still be present and in the same relative order.
-        int last = -1;
-        foreach (var item in _items)
-        {
-            if (!position.TryGetValue(item.Id, out var at) || at <= last) return false;
-            last = at;
-        }
-        if (found.Count - _items.Count > MaxInline) return false;
-
-        for (int i = 0; i < found.Count; i++)
-        {
-            if (i < _items.Count && _items[i].Id == found[i].Id) continue;
-            _items.Insert(i, new FontItem(found[i], _lib, _activator, _thumbs, _installer, SampleBox.Text));
-        }
-        return true;
-    }
-
-    private void OnContainerChanging(ListViewBase sender, ContainerContentChangingEventArgs args)
-    {
-        if (args.InRecycleQueue && args.Item is FontItem item) item.CancelThumbnail();
-    }
-
     private void OnSearchChanged(AutoSuggestBox s, AutoSuggestBoxTextChangedEventArgs e) => Refresh();
-    private void OnSampleChanged(object s, TextChangedEventArgs e) { foreach (var i in _items) i.Sample = SampleBox.Text; RenderPreview(); }
+    private void OnSampleChanged(object s, TextChangedEventArgs e) { foreach (var i in AllItems) i.Sample = SampleBox.Text; RenderPreview(); }
 
     private async void OnAddFolder(object s, RoutedEventArgs e) => await AddFolderViaPickerAsync();
 
@@ -371,6 +341,7 @@ public sealed partial class MainWindow : Window
         ScanStatus.Text = "Cancelling…";
         _scanQueue.Clear();
         CancelQuietly(_scanCts);
+        CancelQuietly(_activationCts);
     }
 
     /// <summary>Scans run one at a time. Folder-change scans are quiet; scans the person asked for show progress.</summary>
@@ -503,54 +474,6 @@ public sealed partial class MainWindow : Window
     }
 
     // ---- sidebar ----
-    private void RebuildNav()
-    {
-        _building = true;
-        NavList.Items.Clear();
-        NavList.Items.Add(new ListViewItem { Content = "All fonts", Tag = new NavEntry(NavKind.All, "All fonts") });
-        NavList.Items.Add(new ListViewItem { Content = "★ Favorites", Tag = new NavEntry(NavKind.Favorites, "Favorites") });
-        NavList.Items.Add(new ListViewItem { Content = "Always active", Tag = new NavEntry(NavKind.AlwaysActive, "Always active") });
-        NavList.Items.Add(new ListViewItem { Content = "Installed", Tag = new NavEntry(NavKind.Installed, "Installed") });
-
-        NavList.Items.Add(new ListViewHeaderItem { Content = "Collections" });
-        foreach (var (id, name) in _lib.Collections())
-        {
-            var item = new ListViewItem { Content = name, Tag = new NavEntry(NavKind.Collection, name, id) };
-            var del = new MenuFlyoutItem { Text = "Delete collection" };
-            del.Click += (_, _) =>
-            {
-                _lib.DeleteCollection(id);
-                if (_nav.Kind == NavKind.Collection && _nav.Id == id) _nav = new(NavKind.All, "All fonts");
-                RebuildNav();
-                Refresh();
-                RebuildOrganize();
-            };
-            var rename = new MenuFlyoutItem { Text = "Rename…" };
-            rename.Click += async (_, _) => await RenameCollectionAsync(id, name);
-            item.ContextFlyout = new MenuFlyout { Items = { rename, del } };
-            NavList.Items.Add(item);
-        }
-
-        NavList.Items.Add(new ListViewHeaderItem { Content = "Tags" });
-        foreach (var tag in _lib.Tags())
-            NavList.Items.Add(new ListViewItem { Content = "# " + tag, Tag = new NavEntry(NavKind.Tag, tag) });
-
-        foreach (var o in NavList.Items.OfType<ListViewItem>())
-            if (o.Tag is NavEntry e && e.Kind == _nav.Kind && e.Id == _nav.Id && e.Label == _nav.Label)
-            {
-                NavList.SelectedItem = o;
-                break;
-            }
-        _building = false;
-    }
-
-    private void OnNavChanged(object s, SelectionChangedEventArgs e)
-    {
-        if (_building || NavList.SelectedItem is not ListViewItem { Tag: NavEntry entry }) return;
-        _nav = entry;
-        Refresh();
-    }
-
     private async void OnNewCollection(object s, RoutedEventArgs e)
     {
         var box = new TextBox { PlaceholderText = "Collection name" };
@@ -654,6 +577,9 @@ public sealed partial class MainWindow : Window
             new(Windows.System.VirtualKey.Number2, Ctrl, "Ctrl+2", "Show favorites", () => SelectNav(NavKind.Favorites)),
             new(Windows.System.VirtualKey.Number3, Ctrl, "Ctrl+3", "Show always-active fonts", () => SelectNav(NavKind.AlwaysActive)),
             new(Windows.System.VirtualKey.Number4, Ctrl, "Ctrl+4", "Show installed fonts", () => SelectNav(NavKind.Installed)),
+            new(Windows.System.VirtualKey.Number5, Ctrl, "Ctrl+5", "Show recently used fonts", () => SelectNav(NavKind.Recent)),
+            new(Windows.System.VirtualKey.Number6, Ctrl, "Ctrl+6", "Show active fonts", () => SelectNav(NavKind.Active)),
+            new(Windows.System.VirtualKey.Number7, Ctrl, "Ctrl+7", "Show inactive fonts", () => SelectNav(NavKind.Inactive)),
             new(Windows.System.VirtualKey.F2, None, "F2", "Rename the selected collection",
                 () => { if (_nav.Kind != NavKind.Collection) return false; _ = RenameCollectionAsync(_nav.Id, _nav.Label); return true; }),
             new(Vk, None, "Esc", "Cancel a running scan, otherwise clear the search", () =>

@@ -19,7 +19,7 @@ public static class UnusedFontPolicy
     /// </summary>
     public static IReadOnlyList<DeactivatedFont> Apply(FontLibrary library, FontActivator activator, TimeSpan maxAge, DateTimeOffset now)
     {
-        library.InitializeUsage(now);
+        library.InitializeUsage(now, activator.Active);
         var stale = library.StalePaths(now - maxAge);
         if (stale.Count == 0) return Array.Empty<DeactivatedFont>();
 

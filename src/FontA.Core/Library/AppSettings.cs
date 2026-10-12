@@ -29,6 +29,15 @@ public sealed class AppSettings
     /// <summary>Check GitHub for new versions in the background and install them when FontA quits. Only applies to installed copies.</summary>
     public bool AutoUpdate { get => Get("updates.auto", true); set => Set("updates.auto", value); }
 
+    /// <summary>How long Windows took per font the last times FontA switched many fonts on or off on this PC (milliseconds).</summary>
+    public double ActivationMsPerFont
+    {
+        get => double.TryParse(_lib.GetSetting("activation.msPerFont"), System.Globalization.NumberStyles.Float,
+                   System.Globalization.CultureInfo.InvariantCulture, out var v) && v is >= 1 and <= 10_000
+            ? v : FontA.Core.Activation.ActivationPlan.DefaultMsPerFont;
+        set => _lib.SetSetting("activation.msPerFont", Math.Clamp(value, 1, 10_000).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture));
+    }
+
     public bool UnusedEnabled { get => Get("unused.enabled", false); set => Set("unused.enabled", value); }
 
     public int UnusedDays

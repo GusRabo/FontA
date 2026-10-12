@@ -17,6 +17,13 @@ This is a clean-room implementation inspired by the behaviour of FontBase; it co
   and unused-font options. Most things are off until you turn them on. On by default: deactivating fonts on exit (as before),
   rescanning and watching your folders, and automatic updates (installed copies only; see *Updating FontA*). Only one copy of FontA runs at a time; starting it again brings the running one
   forward.
+- **Sidebar views with counts:** All, Recent (the last 100 fonts you used), Favorites, Active, Inactive, Always active and
+  Installed, then your Collections, **Folders** and Tags. Collections, Folders and Tags can be collapsed.
+- **Fonts grouped by folder:** the grid shows your fonts under a heading for each folder they are in (a folder you added
+  shows by name; folders inside it by their path from there). Click a folder in the sidebar to see just that one.
+- **Activation circles:** a round switch next to every font, every folder heading, and every folder and collection in
+  the sidebar. Solid green means all active, a ring with a dot means some, hollow means none. Click it to switch the
+  whole group on (or off, when everything in it is already on). Installed fonts are left alone.
 - **Fast grid:** virtualized cards with thumbnails drawn by DirectWrite on a pool of renderers, cached in memory
   and on disk.
 - **Preview pane:** editable sample text, size, one slider per variable-font axis, and a checkbox per OpenType
@@ -51,6 +58,7 @@ Press **F1** in the app for this list. Font actions apply to the selected font.
 | Ctrl+N | New collection |
 | F2 | Rename the selected collection |
 | Ctrl+1 / 2 / 3 / 4 | Show All fonts / Favorites / Always active / Installed |
+| Ctrl+5 / 6 / 7 | Show Recent / Active / Inactive fonts |
 | Ctrl+D | Favorite or unfavorite |
 | Ctrl+Enter | Activate or deactivate |
 | Ctrl+Shift+A | Toggle always active |
@@ -120,6 +128,8 @@ and is skipped on machines with fewer than 4 cores.
 Everything is stored per user in `%LOCALAPPDATA%\FontA`:
 
 - `library.db`: the SQLite index (fonts, favorites, tags, collections, remembered folders, settings)
+- `active-fonts.txt`: a record of which fonts FontA has switched on, so that after a crash or a forced close it can show
+  the fonts Windows still has active as active. Ignored after a Windows restart.
 - `crash.log`: written if FontA hits an unexpected error. Please include it when reporting a problem.
 - Debug builds (not release builds) honour a `FONTA_DATA_DIR` environment variable to use a different folder, handy for
   trying things out without touching your real library. Release builds ignore it on purpose.
@@ -249,6 +259,14 @@ instead of GitHub. Release builds ignore the variable, so it can't be used to re
 versions with `-c Debug`, pack both into one folder, run the older one from its portable zip, and watch it update.
 
 ## Known limitations
+
+- **Activating many fonts is slow, and that is Windows, not FontA.** Switching a font on system-wide makes Windows update
+  its font list for every open app. On the PC used for testing that cost about half a second per font, so a folder of 300
+  fonts takes about 2.5 minutes (and deactivating takes as long). It runs in the background with a progress line, a time
+  estimate and a Cancel button, FontA keeps working meanwhile, and it asks before long jobs. Using several threads does not
+  help; only process-private activation is instant, but those fonts would be invisible to your other apps.
+- If FontA is closed while it is still activating, it stops, then deactivates what it had switched on, which can take a
+  moment for a big batch.
 
 - The first scroll through a large library renders thumbnails on demand; later scrolls are served from the cache.
 - Loading the font list reads every matching row on the UI thread, which may stutter on libraries of tens of

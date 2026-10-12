@@ -125,12 +125,84 @@ public sealed class FontLibrary : IDisposable
     public void TouchUsedPath(string path, DateTimeOffset at) =>
         Run("UPDATE fonts SET last_used=$t WHERE path=$p", ("$t", at.ToUnixTimeSeconds()), ("$p", path));
 
-    /// <summary>Starts the clock for fonts with no usage record yet. Returns how many were started.</summary>
-    public int InitializeUsage(DateTimeOffset now)
+    /// <summary>How many fonts the "Recent" view shows.</summary>
+    public const int RecentLimit = 100;
+
+    /// <summary>
+    /// Starts the clock for always-active fonts and for the given currently active fonts, if they have no usage record
+    /// yet. Other fonts are left alone: they can't be deactivated by inactivity, and giving them a clock would make
+    /// them all look "recently used". Returns how many were started.
+    /// </summary>
+    public int InitializeUsage(DateTimeOffset now, IEnumerable<string>? activePaths = null)
     {
-        using var c = Command("UPDATE fonts SET last_used=$t WHERE last_used=0", ("$t", now.ToUnixTimeSeconds()));
-        return c.ExecuteNonQuery();
+        long t = now.ToUnixTimeSeconds();
+        int started;
+        using var tx = _db.BeginTransaction();
+        using (var c = Command("UPDATE fonts SET last_used=$t WHERE last_used=0 AND always_active=1", ("$t", t)))
+            started = c.ExecuteNonQuery();
+        if (activePaths != null)
+            foreach (var path in activePaths)
+            {
+                using var c = Command("UPDATE fonts SET last_used=$t WHERE last_used=0 AND path=$p", ("$t", t), ("$p", path));
+                started += c.ExecuteNonQuery();
+            }
+        tx.Commit();
+        return started;
     }
+
+    /// <summary>Records use for many files in one go (for example when a whole folder is activated).</summary>
+    public void TouchUsedPaths(IEnumerable<string> paths, DateTimeOffset at)
+    {
+        using var tx = _db.BeginTransaction();
+        foreach (var path in paths)
+        {
+            using var c = Command("UPDATE fonts SET last_used=$t WHERE path=$p", ("$t", at.ToUnixTimeSeconds()), ("$p", path));
+            c.ExecuteNonQuery();
+        }
+        tx.Commit();
+    }
+
+    // ---- sidebar statistics ----
+
+    /// <summary>One row per font file with how many library entries it holds (a .ttc holds several). Cheap even for huge libraries.</summary>
+    public IReadOnlyList<(string Path, int Count)> PathCounts()
+    {
+        using var c = Command("SELECT path, COUNT(*) FROM fonts GROUP BY path");
+        using var r = c.ExecuteReader();
+        var list = new List<(string, int)>();
+        while (r.Read()) list.Add((r.GetString(0), r.GetInt32(1)));
+        return list;
+    }
+
+    public IReadOnlySet<string> InstalledPaths() => new HashSet<string>(Column("SELECT source FROM installs"), StringComparer.OrdinalIgnoreCase);
+
+    public LibraryCounts Counts()
+    {
+        using var c = Command($"""
+            SELECT COUNT(*),
+                   COALESCE(SUM(favorite),0),
+                   COALESCE(SUM(always_active),0),
+                   COALESCE(SUM(EXISTS(SELECT 1 FROM installs i WHERE i.source=fonts.path)),0),
+                   COALESCE(SUM(last_used>0),0)
+            FROM fonts
+            """);
+        using var r = c.ExecuteReader();
+        r.Read();
+        return new LibraryCounts(r.GetInt32(0), r.GetInt32(1), r.GetInt32(2), r.GetInt32(3), Math.Min(RecentLimit, r.GetInt32(4)));
+    }
+
+    public IReadOnlyDictionary<long, int> CollectionCounts()
+    {
+        using var c = Command("SELECT collection_id, COUNT(*) FROM collection_fonts GROUP BY collection_id");
+        using var r = c.ExecuteReader();
+        var d = new Dictionary<long, int>();
+        while (r.Read()) d[r.GetInt64(0)] = r.GetInt32(1);
+        return d;
+    }
+
+    /// <summary>The distinct file paths of the fonts in a collection.</summary>
+    public IReadOnlyList<string> CollectionPaths(long collectionId) =>
+        ColumnWith("SELECT DISTINCT path FROM fonts WHERE id IN (SELECT font_id FROM collection_fonts WHERE collection_id=$c)", ("$c", collectionId));
 
     /// <summary>
     /// Files whose most recent use (across all faces in the file) is before the cutoff. Installed fonts are excluded,
@@ -257,7 +329,7 @@ public sealed class FontLibrary : IDisposable
         c.ExecuteNonQuery();
     }
 
-    public IReadOnlyList<LibraryFont> Search(string? text = null, bool favoritesOnly = false, string? tag = null, long? collectionId = null, bool alwaysActiveOnly = false, bool installedOnly = false)
+    public IReadOnlyList<LibraryFont> Search(string? text = null, bool favoritesOnly = false, string? tag = null, long? collectionId = null, bool alwaysActiveOnly = false, bool installedOnly = false, bool recentOnly = false)
     {
         var where = new List<string> { "1=1" };
         var args = new List<(string, object?)>();
@@ -265,10 +337,11 @@ public sealed class FontLibrary : IDisposable
         if (favoritesOnly) where.Add("favorite=1");
         if (alwaysActiveOnly) where.Add("always_active=1");
         if (installedOnly) where.Add("EXISTS(SELECT 1 FROM installs i WHERE i.source=fonts.path)");
+        if (recentOnly) where.Add("last_used>0");
         if (tag != null) { where.Add("id IN (SELECT font_id FROM tags WHERE tag=$t)"); args.Add(("$t", tag)); }
         if (collectionId != null) { where.Add("id IN (SELECT font_id FROM collection_fonts WHERE collection_id=$c)"); args.Add(("$c", collectionId)); }
 
-        using var cmd = Command($"SELECT id,path,face,family,style,full_name,weight,italic,axes,features,favorite,always_active,EXISTS(SELECT 1 FROM installs i WHERE i.source=fonts.path) FROM fonts WHERE {string.Join(" AND ", where)} ORDER BY family,weight,style", args.ToArray());
+        using var cmd = Command($"SELECT id,path,face,family,style,full_name,weight,italic,axes,features,favorite,always_active,EXISTS(SELECT 1 FROM installs i WHERE i.source=fonts.path) FROM fonts WHERE {string.Join(" AND ", where)} {(recentOnly ? $"ORDER BY last_used DESC LIMIT {RecentLimit}" : "ORDER BY family,weight,style")}", args.ToArray());
         using var r = cmd.ExecuteReader();
         var list = new List<LibraryFont>();
         while (r.Read())
@@ -457,13 +530,24 @@ public sealed class FontLibrary : IDisposable
         var o = c.ExecuteScalar();
         return o is null or DBNull ? default! : (T)Convert.ChangeType(o, Nullable.GetUnderlyingType(typeof(T)) ?? typeof(T));
     }
-    private List<string> Column(string sql)
+    private List<string> Column(string sql) => ColumnWith(sql);
+
+    private List<string> ColumnWith(string sql, params (string, object?)[] args)
     {
-        using var c = Command(sql);
+        using var c = Command(sql, args);
         using var r = c.ExecuteReader();
         var l = new List<string>();
         while (r.Read()) l.Add(r.GetString(0));
         return l;
+    }
+
+    public IReadOnlyDictionary<string, int> TagCounts()
+    {
+        using var c = Command("SELECT tag, COUNT(*) FROM tags GROUP BY tag");
+        using var r = c.ExecuteReader();
+        var d = new Dictionary<string, int>();
+        while (r.Read()) d[r.GetString(0)] = r.GetInt32(1);
+        return d;
     }
 
     public void Dispose() => _db.Dispose();
@@ -482,3 +566,6 @@ public sealed class LibraryTooNewException(int found, int supported)
 }
 
 public sealed record LibraryFont(long Id, FontInfo Info, bool IsFavorite, bool IsAlwaysActive = false, bool IsInstalled = false);
+
+/// <summary>Numbers for the sidebar: how many fonts are in each of the built-in views.</summary>
+public sealed record LibraryCounts(int Total, int Favorites, int AlwaysActive, int Installed, int Recent);

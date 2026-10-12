@@ -25,7 +25,7 @@ public sealed class FontItem : INotifyPropertyChanged
     private readonly FontActivator _activator;
     private readonly ThumbnailCache _thumbs;
     private readonly DispatcherQueue _ui = DispatcherQueue.GetForCurrentThread();
-    private readonly long _stamp;
+    private long? _stamp;   // the file's timestamp, read only when a thumbnail is actually needed (not for every card in a huge library)
     private string _sample;
     private bool _favorite;
     private bool _alwaysActive;
@@ -38,7 +38,6 @@ public sealed class FontItem : INotifyPropertyChanged
     public FontItem(LibraryFont font, FontLibrary lib, FontActivator activator, ThumbnailCache thumbs, FontInstaller installer, string sample)
     {
         _font = font; _lib = lib; _activator = activator; _thumbs = thumbs; _sample = sample; _favorite = font.IsFavorite; _alwaysActive = font.IsAlwaysActive; _installed = font.IsInstalled; _installer = installer;
-        try { _stamp = File.GetLastWriteTimeUtc(font.Info.Path).Ticks; } catch (IOException) { }
     }
 
     public long Id => _font.Id;
@@ -68,6 +67,15 @@ public sealed class FontItem : INotifyPropertyChanged
         _loading = null;
     }
 
+    private long Stamp()
+    {
+        if (_stamp is { } known) return known;
+        long ticks = 0;
+        try { ticks = File.GetLastWriteTimeUtc(_font.Info.Path).Ticks; } catch (IOException) { }
+        _stamp = ticks;
+        return ticks;
+    }
+
     private void StartLoad()
     {
         _loading?.Cancel();
@@ -75,7 +83,7 @@ public sealed class FontItem : INotifyPropertyChanged
         var text = _sample;
         var info = _font.Info;
         var req = new ThumbnailRequest(info.Path, info.FaceIndex, info.Family, info.Weight, info.IsItalic,
-            _stamp, text, ThumbSize, ThumbWidth, ThumbHeight);
+            Stamp(), text, ThumbSize, ThumbWidth, ThumbHeight);
 
         _ = Task.Run(async () =>
         {
@@ -173,7 +181,8 @@ public sealed class FontItem : INotifyPropertyChanged
                 _lib.MarkUninstalled(_font.Info.Path);
             }
             _installed = install;
-            Raise(nameof(IsInstalled)); Raise(nameof(InstallLabel)); Raise(nameof(CanToggle)); Raise(nameof(IsActive));
+            Raise(nameof(IsInstalled)); Raise(nameof(InstallLabel)); Raise(nameof(CanToggle)); RaiseActiveChanged();
+            ActivationChanged?.Invoke(this);
             return notice;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException
@@ -185,9 +194,29 @@ public sealed class FontItem : INotifyPropertyChanged
 
     public bool IsActive
     {
-        get => _installed || _activator.Active.Contains(_font.Info.Path);
-        set { if (_installed) return; _lib.TouchUsed(_font.Id); if (value) _activator.Activate(_font.Info.Path); else _activator.Deactivate(_font.Info.Path); Raise(); }
+        get => _installed || _activator.IsActive(_font.Info.Path);
+        set
+        {
+            if (_installed) return;
+            _lib.TouchUsed(_font.Id);
+            if (value) _activator.Activate(_font.Info.Path); else _activator.Deactivate(_font.Info.Path);
+            RaiseActiveChanged();
+            ActivationChanged?.Invoke(this);
+        }
     }
+
+    /// <summary>For the activation circle on the card: <see cref="ActivationDot.On"/> or <see cref="ActivationDot.Off"/>.</summary>
+    public int ActiveState => IsActive ? ActivationDot.On : ActivationDot.Off;
+
+    /// <summary>Tells the card to re-read its active state (after a whole folder was switched on or off).</summary>
+    public void RaiseActiveChanged()
+    {
+        Raise(nameof(IsActive));
+        Raise(nameof(ActiveState));
+    }
+
+    /// <summary>Raised after a single font is switched on or off by hand, so group headings and sidebar counts can follow.</summary>
+    public static event Action<FontItem>? ActivationChanged;
 
     public event PropertyChangedEventHandler? PropertyChanged;
     private void Raise([CallerMemberName] string? n = null) => PropertyChanged?.Invoke(this, new(n));
