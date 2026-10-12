@@ -19,21 +19,13 @@ jobs:
   release:
     runs-on: windows-latest
     permissions:
-      contents: read    # this repository is only read; the release is written to the releases repository with RELEASES_TOKEN
+      contents: write   # lets this job create the release and upload its files; nothing else gets write access
     env:
-      # Releases go to a separate PUBLIC repository: this source repository is private, and installed copies of FontA
-      # (and Install-FontA.bat) must be able to download updates without signing in.
-      RELEASES_REPO: GusRabo/FontA-releases
-      REPO_URL: https://github.com/GusRabo/FontA-releases
+      REPO_URL: https://github.com/${{ github.repository }}
       PACK_ID: FontAApp
       REF_NAME: ${{ github.ref_name }}
-      # A fine-grained access token limited to the releases repository (Contents: read and write). See the README.
-      GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - name: Check the releases token is set
-        shell: pwsh
-        run: if (-not $env:GH_TOKEN) { throw 'The RELEASES_TOKEN secret is missing. See the README (Publishing an update).' }
-
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
@@ -104,11 +96,11 @@ jobs:
           if (-not $lines) { throw "No release files found to checksum." }
           $lines | Set-Content Releases/SHA256SUMS.txt -Encoding ascii
           $lines
-          gh release upload $env:REF_NAME Releases/SHA256SUMS.txt --repo $env:RELEASES_REPO --clobber
+          gh release upload $env:REF_NAME Releases/SHA256SUMS.txt --repo $env:GITHUB_REPOSITORY --clobber
           if ($LASTEXITCODE -ne 0) { throw "Could not attach the checksums to the draft release." }
 
       - name: Publish the release
         shell: pwsh
         run: |
-          gh release edit $env:REF_NAME --repo $env:RELEASES_REPO --draft=false --latest
+          gh release edit $env:REF_NAME --repo $env:GITHUB_REPOSITORY --draft=false --latest
           if ($LASTEXITCODE -ne 0) { throw "Could not publish the release." }
