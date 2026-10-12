@@ -276,7 +276,7 @@ public sealed partial class MainWindow
     private void RebuildNav()
     {
         _building = true;
-        double offset = Scroller(NavList)?.VerticalOffset ?? 0;
+        double offset = SidebarScroll.VerticalOffset;
         NavList.Items.Clear();
         _navRows.Clear();
         _stats = ComputeStats();
@@ -330,7 +330,7 @@ public sealed partial class MainWindow
         foreach (var o in NavList.Items.OfType<ListViewItem>())
             if (o.Tag is NavEntry e && RowKey(e) == wanted) { NavList.SelectedItem = o; break; }
         _building = false;
-        if (offset > 0) RestoreScroll(NavList, offset);
+        if (offset > 0) RestoreScroll(SidebarScroll, offset);
     }
 
     private ListViewItem AddRow(NavEntry entry, string label, bool dot = false, bool interactive = true)
@@ -432,17 +432,17 @@ public sealed partial class MainWindow
 
     private const double EdgeZone = 60, MaxEdgeSpeed = 22;   // pixels from the edge; pixels per 16 ms tick at the very edge
     private DispatcherTimer? _hoverTimer;
-    private ListViewBase? _hoverList;
+    private FrameworkElement? _hoverList;
     private double _hoverY;
 
-    /// <summary>While the mouse rests near the top or bottom edge of the font list or the sidebar, that list scrolls by itself.</summary>
+    /// <summary>While the mouse rests near the top or bottom edge of the font list or the sidebar, that list scrolls by itself. (The sidebar scrolls as a whole: search box, folders and the Add button.)</summary>
     private void SetUpHoverScroll()
     {
-        foreach (var list in new ListViewBase[] { FontGrid, NavList })
+        foreach (var list in new FrameworkElement[] { FontGrid, SidebarScroll })
         {
             list.AddHandler(UIElement.PointerMovedEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler((s, e) =>
             {
-                _hoverList = (ListViewBase)s;
+                _hoverList = (FrameworkElement)s;
                 _hoverY = e.GetCurrentPoint(_hoverList).Position.Y;
                 if (_settings.HoverScroll) EnsureHoverTimer().Start();
             }), handledEventsToo: true);
@@ -471,6 +471,7 @@ public sealed partial class MainWindow
 
     private static ScrollViewer? Scroller(DependencyObject root)
     {
+        if (root is ScrollViewer self) return self;
         int n = VisualTreeHelper.GetChildrenCount(root);
         for (int i = 0; i < n; i++)
         {
