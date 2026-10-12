@@ -31,6 +31,7 @@ public sealed partial class MainWindow
         IReadOnlyDictionary<long, List<string>> CollectionPaths,
         IReadOnlyDictionary<string, int> TagCounts);
 
+    private const string NewCollectionTag = "new-collection";
     private NavEntry _nav = new(NavKind.All, "All");
     private List<FontGroup> _groups = new();
     private Dictionary<long, FontItem> _itemsById = new();
@@ -290,6 +291,9 @@ public sealed partial class MainWindow
 
         AddHeader("COLLECTIONS");
         if (!_collapsedSections.Contains("COLLECTIONS"))
+        {
+            var add = new TextBlock { Text = "New collection", Opacity = 0.55, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(34, 0, 0, 0) };
+            NavList.Items.Add(new ListViewItem { Content = add, Tag = NewCollectionTag, Padding = new Thickness(4, 0, 12, 0), MinHeight = 38 });
             foreach (var (id, name) in _stats.Collections)
             {
                 var item = AddRow(new(NavKind.Collection, name, id), name, dot: true);
@@ -306,6 +310,7 @@ public sealed partial class MainWindow
                 };
                 item.ContextFlyout = new MenuFlyout { Items = { rename, delete } };
             }
+        }
 
         AddHeader("FOLDERS");
         if (!_collapsedSections.Contains("FOLDERS"))
@@ -407,7 +412,18 @@ public sealed partial class MainWindow
 
     private void OnNavChanged(object s, SelectionChangedEventArgs e)
     {
-        if (_building || NavList.SelectedItem is not ListViewItem { Tag: NavEntry entry }) return;
+        if (_building) return;
+        if (NavList.SelectedItem is ListViewItem { Tag: string tag } && tag == NewCollectionTag)
+        {
+            // Not a view: put the highlight back on the current one and ask for a name.
+            _building = true;
+            foreach (var o in NavList.Items.OfType<ListViewItem>())
+                if (o.Tag is NavEntry e2 && RowKey(e2) == RowKey(_nav)) { NavList.SelectedItem = o; break; }
+            _building = false;
+            OnNewCollection(this, null!);
+            return;
+        }
+        if (NavList.SelectedItem is not ListViewItem { Tag: NavEntry entry }) return;
         _nav = entry;
         Refresh();
     }

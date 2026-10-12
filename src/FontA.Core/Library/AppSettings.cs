@@ -38,6 +38,16 @@ public sealed class AppSettings
         set => _lib.SetSetting("activation.msPerFont", Math.Clamp(value, 1, 10_000).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture));
     }
 
+    /// <summary>Use the light colour scheme instead of the default dark one.</summary>
+    public bool LightTheme { get => Get("ui.lightTheme", false); set => Set("ui.lightTheme", value); }
+
+    /// <summary>Preview text size in the font list.</summary>
+    public int ListSize
+    {
+        get => int.TryParse(_lib.GetSetting("ui.listSize"), out var s) && s is >= 12 and <= 160 ? s : 36;
+        set => _lib.SetSetting("ui.listSize", Math.Clamp(value, 12, 160).ToString());
+    }
+
     public bool UnusedEnabled { get => Get("unused.enabled", false); set => Set("unused.enabled", value); }
 
     public int UnusedDays

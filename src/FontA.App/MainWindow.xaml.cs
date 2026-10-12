@@ -53,7 +53,7 @@ public sealed partial class MainWindow : Window
         // If an earlier run was killed or crashed, Windows still has its fonts switched on: pick them up so they show as active.
         _activator.Adopt(_journal.LoadIfSameSession());
         _activator.Changed += ScheduleJournalSave;
-        _thumbs = new ThumbnailCache(Path.Combine(dir, "thumbs"));
+        _thumbs = new ThumbnailCache(Path.Combine(dir, "thumbs"), memoryCapacity: 500);
         _thumbs.Prune(TimeSpan.FromDays(60));
         ShouldStartHidden = _settings.StartHidden && Environment.GetCommandLineArgs().Contains(StartupRegistration.AutoStartArgument);
 
@@ -87,6 +87,10 @@ public sealed partial class MainWindow : Window
         // Keep "start with Windows" pointing at wherever this copy of the app now lives (it moves when you update it).
         try { if (_settings.StartWithWindows && Environment.ProcessPath is { } exe) _startup.RefreshPath(exe); }
         catch (Exception ex) when (ex is UnauthorizedAccessException or System.Security.SecurityException or IOException) { }
+        ApplyTheme(_settings.LightTheme);
+        FontItem.ListSize = _settings.ListSize;
+        ListSizeSlider.Value = FontItem.ListSize;
+        ListSizeText.Text = FontItem.ListSize + "px";
         RunUnusedCheck(manual: false, refresh: false); // before activating, so stale always-active fonts stay off
         var unusedTimer = new Microsoft.UI.Xaml.DispatcherTimer { Interval = TimeSpan.FromHours(1) };
         unusedTimer.Tick += (_, _) => RunUnusedCheck(manual: false, refresh: true);
@@ -288,6 +292,69 @@ public sealed partial class MainWindow : Window
 
     private async void OnAddFolder(object s, RoutedEventArgs e) => await AddFolderViaPickerAsync();
 
+    // ---- list size and colour scheme ----
+    private DispatcherTimer? _sizeTimer;
+
+    private void OnListSizeChanged(object s, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
+    {
+        if (ListSizeText == null) return;   // raised while the window is still being built
+        int size = (int)Math.Round(e.NewValue);
+        ListSizeText.Text = size + "px";
+        // Redrawing every visible row on each step of a drag would stutter: wait for the slider to settle.
+        _sizeTimer ??= new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
+        _sizeTimer.Tick -= OnSizeSettled;
+        _sizeTimer.Tick += OnSizeSettled;
+        _sizeTimer.Stop(); _sizeTimer.Start();
+    }
+
+    private void OnSizeSettled(object? s, object e)
+    {
+        _sizeTimer?.Stop();
+        int size = (int)Math.Round(ListSizeSlider.Value);
+        if (size == FontItem.ListSize) return;
+        FontItem.ListSize = size;
+        _settings.ListSize = size;
+        foreach (var item in AllItems) item.ApplyListSize();
+    }
+
+    private void OnResetListSize(object s, RoutedEventArgs e) => ListSizeSlider.Value = FontItem.DefaultListSize;
+
+    private void OnToggleTheme(object s, RoutedEventArgs e)
+    {
+        var root = (FrameworkElement)Content;
+        bool toLight = root.ActualTheme == ElementTheme.Dark;
+        _settings.LightTheme = toLight;
+        ApplyTheme(toLight);   // the grid redraws through ActualThemeChanged
+    }
+
+    /// <summary>Dark is the default; the title bar follows so there is no white strip above a dark window.</summary>
+    private void ApplyTheme(bool light)
+    {
+        ((FrameworkElement)Content).RequestedTheme = light ? ElementTheme.Light : ElementTheme.Dark;
+        var bar = AppWindow.TitleBar;
+        var back = light ? Windows.UI.Color.FromArgb(255, 243, 243, 243) : Windows.UI.Color.FromArgb(255, 32, 32, 32);
+        var fore = light ? Windows.UI.Color.FromArgb(255, 0, 0, 0) : Windows.UI.Color.FromArgb(255, 255, 255, 255);
+        bar.BackgroundColor = bar.InactiveBackgroundColor = bar.ButtonBackgroundColor = bar.ButtonInactiveBackgroundColor = back;
+        bar.ForegroundColor = bar.InactiveForegroundColor = bar.ButtonForegroundColor = bar.ButtonInactiveForegroundColor = fore;
+    }
+
+    private void OnFavoriteClick(object s, RoutedEventArgs e)
+    {
+        if (((FrameworkElement)s).DataContext is FontItem f) f.IsFavorite = !f.IsFavorite;
+        RefreshNavStates();
+    }
+
+    private void OnAlwaysClick(object s, RoutedEventArgs e)
+    {
+        if (((FrameworkElement)s).DataContext is FontItem { CanToggle: true } f) f.IsAlwaysActive = !f.IsAlwaysActive;
+        RefreshNavStates();
+    }
+
+    private async void OnInstallSelected(object s, RoutedEventArgs e)
+    {
+        if (_selected != null) await ToggleInstallAsync(_selected);
+    }
+
     /// <summary>Shows newly indexed fonts while a scan runs, backing off in proportion to how long a refresh takes.</summary>
     private void LiveRefresh(int indexed)
     {
@@ -323,6 +390,7 @@ public sealed partial class MainWindow : Window
         }
 
         var message = item.SetInstalled(install);
+        if (item == _selected) InstallButton.Content = item.InstallLabel;
         // An uninstalled font leaves the Installed list, and one whose original file was already gone disappears entirely.
         if (_nav.Kind == NavKind.Installed || !File.Exists(item.Info.Path)) { RebuildNav(); Refresh(); }
         if (message == null) return;
@@ -428,7 +496,9 @@ public sealed partial class MainWindow : Window
     {
         _selected = FontGrid.SelectedItem as FontItem;
         CollectionsButton.IsEnabled = NewTagBox.IsEnabled = _selected != null;
+        DetailsPane.Visibility = _selected == null ? Visibility.Collapsed : Visibility.Visible;
         if (_selected == null) return;
+        InstallButton.Content = _selected.InstallLabel;
         _lib.TouchUsed(_selected.Id); // previewing a font counts as using it
         RebuildOrganize();
         var info = _selected.Info;
@@ -461,7 +531,7 @@ public sealed partial class MainWindow : Window
     {
         if (_building || _selected == null) return;
         var info = _selected.Info;
-        int w = 370, h = 260;
+        int w = 308, h = 240;
         bool dark = ((FrameworkElement)Content).ActualTheme == ElementTheme.Dark;
         var ink = dark ? new Vortice.Mathematics.Color4(1f, 1f, 1f, 1f) : new Vortice.Mathematics.Color4(0f, 0f, 0f, 1f);
         var bytes = _renderer.Render(new PreviewRequest(info.Path, info.Family, SampleBox.Text, (float)SizeSlider.Value, w, h,
@@ -570,9 +640,9 @@ public sealed partial class MainWindow : Window
                 () => OnSelected(f => { if (f.CanToggle) f.IsAlwaysActive = !f.IsAlwaysActive; })),
             new(K('I'), CtrlShift, "Ctrl+Shift+I", "Install / uninstall the selected font for your account",
                 () => OnSelected(f => _ = ToggleInstallAsync(f))),
-            new((Windows.System.VirtualKey)187, Ctrl, "Ctrl+=", "Larger preview text", () => { SizeSlider.Value = Math.Min(SizeSlider.Maximum, SizeSlider.Value + 4); return true; }),
-            new((Windows.System.VirtualKey)189, Ctrl, "Ctrl+-", "Smaller preview text", () => { SizeSlider.Value = Math.Max(SizeSlider.Minimum, SizeSlider.Value - 4); return true; }),
-            new(Windows.System.VirtualKey.Number0, Ctrl, "Ctrl+0", "Reset preview size", () => { SizeSlider.Value = 48; return true; }),
+            new((Windows.System.VirtualKey)187, Ctrl, "Ctrl+=", "Larger preview text", () => { ListSizeSlider.Value = Math.Min(ListSizeSlider.Maximum, ListSizeSlider.Value + 4); return true; }),
+            new((Windows.System.VirtualKey)189, Ctrl, "Ctrl+-", "Smaller preview text", () => { ListSizeSlider.Value = Math.Max(ListSizeSlider.Minimum, ListSizeSlider.Value - 4); return true; }),
+            new(Windows.System.VirtualKey.Number0, Ctrl, "Ctrl+0", "Reset preview size", () => { ListSizeSlider.Value = FontItem.DefaultListSize; return true; }),
             new(Windows.System.VirtualKey.Number1, Ctrl, "Ctrl+1", "Show all fonts", () => SelectNav(NavKind.All)),
             new(Windows.System.VirtualKey.Number2, Ctrl, "Ctrl+2", "Show favorites", () => SelectNav(NavKind.Favorites)),
             new(Windows.System.VirtualKey.Number3, Ctrl, "Ctrl+3", "Show always-active fonts", () => SelectNav(NavKind.AlwaysActive)),

@@ -17,8 +17,9 @@ public sealed class ActivationDot : Button
     public const int Off = 0, Some = 1, On = 2;
 
     private static readonly SolidColorBrush Green = new(Color.FromArgb(255, 34, 197, 94));
-    private readonly Ellipse _ring = new() { Width = 16, Height = 16, StrokeThickness = 1.75, Fill = new SolidColorBrush(Colors.Transparent) };
-    private readonly Ellipse _fill = new() { Width = 16, Height = 16 };
+    private static readonly SolidColorBrush Grey = new(Color.FromArgb(255, 150, 150, 150));   // readable on both the dark and the light scheme
+    private readonly Ellipse _ring = new() { Width = 14, Height = 14, StrokeThickness = 2, Fill = new SolidColorBrush(Colors.Transparent), Stroke = Grey };
+    private readonly Ellipse _fill = new() { Width = 14, Height = 14 };
 
     public static readonly DependencyProperty StateProperty = DependencyProperty.Register(
         nameof(State), typeof(int), typeof(ActivationDot), new PropertyMetadata(Off, (d, _) => ((ActivationDot)d).UpdateVisual()));
@@ -32,17 +33,15 @@ public sealed class ActivationDot : Button
 
     public ActivationDot()
     {
-        Width = 30; Height = 30; MinWidth = 0; MinHeight = 0;
+        Width = 28; Height = 28; MinWidth = 0; MinHeight = 0;
         Padding = new Thickness(0);
         Background = new SolidColorBrush(Colors.Transparent);
         BorderThickness = new Thickness(0);
-        CornerRadius = new CornerRadius(15);
+        CornerRadius = new CornerRadius(14);
         HorizontalAlignment = HorizontalAlignment.Center;
         VerticalAlignment = VerticalAlignment.Center;
-        if (Application.Current.Resources.TryGetValue("TextFillColorSecondaryBrush", out var ring) && ring is Brush b) _ring.Stroke = b;
-        else _ring.Stroke = new SolidColorBrush(Colors.Gray);
 
-        var grid = new Grid { Width = 16, Height = 16 };
+        var grid = new Grid { Width = 14, Height = 14 };
         grid.Children.Add(_fill);
         grid.Children.Add(_ring);
         Content = grid;
@@ -54,18 +53,18 @@ public sealed class ActivationDot : Button
         switch (State)
         {
             case On:
-                _fill.Fill = Green; _fill.Width = _fill.Height = 16; _fill.Visibility = Visibility.Visible;
+                _fill.Fill = Green; _fill.Width = _fill.Height = 14; _fill.Visibility = Visibility.Visible;
                 _ring.Stroke = Green;
                 ToolTipService.SetToolTip(this, "Active. Click to deactivate");
                 break;
             case Some:
-                _fill.Fill = Green; _fill.Width = _fill.Height = 7; _fill.Visibility = Visibility.Visible;
+                _fill.Fill = Green; _fill.Width = _fill.Height = 6; _fill.Visibility = Visibility.Visible;
                 _ring.Stroke = Green;
                 ToolTipService.SetToolTip(this, "Some are active. Click to activate all");
                 break;
             default:
                 _fill.Visibility = Visibility.Collapsed;
-                if (Application.Current.Resources.TryGetValue("TextFillColorSecondaryBrush", out var ring) && ring is Brush rb) _ring.Stroke = rb;
+                _ring.Stroke = Grey;
                 ToolTipService.SetToolTip(this, "Inactive. Click to activate");
                 break;
         }

@@ -12,8 +12,13 @@ namespace FontA.App;
 
 public sealed class FontItem : INotifyPropertyChanged
 {
-    public const int ThumbWidth = 296, ThumbHeight = 64;
-    private const float ThumbSize = 24;
+    /// <summary>Thumbnails are drawn wide and clipped by the row, so they fill any window width without being redrawn.</summary>
+    public const int ThumbWidth = 1400;
+    public const int MinListSize = 14, MaxListSize = 120, DefaultListSize = 36;
+
+    /// <summary>The preview text size in the list (the toolbar slider). Changing it: call <see cref="ApplyListSize"/> on the cards.</summary>
+    public static int ListSize { get; set; } = DefaultListSize;
+    public static int ThumbHeight => (int)Math.Ceiling(ListSize * 1.5);
 
     /// <summary>Bounds queued thumbnail work; slightly above the renderer count so the pool never idles.</summary>
     private static readonly SemaphoreSlim Gate = new(ThumbnailCache.DefaultParallelism + 2);
@@ -43,6 +48,26 @@ public sealed class FontItem : INotifyPropertyChanged
     public long Id => _font.Id;
     public FontA.Core.Fonts.FontInfo Info => _font.Info;
     public string Title => $"{_font.Info.Family} · {_font.Info.Style}" + (_font.Info.IsVariable ? " · variable" : "");
+
+    /// <summary>The name on the row: the family, plus the style when it isn't plain Regular.</summary>
+    public string Name => _font.Info.Style is { Length: > 0 } s && !s.Equals("Regular", StringComparison.OrdinalIgnoreCase)
+        ? $"{_font.Info.Family} {s}" : _font.Info.Family;
+
+    /// <summary>The file type shown as a small badge (TTF, OTF, TTC…).</summary>
+    public string Format => Path.GetExtension(_font.Info.Path).TrimStart('.').ToUpperInvariant();
+
+    public string FavoriteGlyph => _favorite ? "♥" : "♡";
+    public double AlwaysOpacity => _alwaysActive ? 1 : 0.35;
+    public double FavoriteOpacity => _favorite ? 1 : 0.6;
+
+    /// <summary>Redraws at the current <see cref="ListSize"/> (only cards that were showing a thumbnail do any work).</summary>
+    public void ApplyListSize()
+    {
+        Raise(nameof(RowThumbHeight));
+        if (_loading != null) StartLoad();
+    }
+
+    public int RowThumbHeight => ThumbHeight;
 
     public string Sample
     {
@@ -82,8 +107,9 @@ public sealed class FontItem : INotifyPropertyChanged
         var cts = _loading = new CancellationTokenSource();
         var text = _sample;
         var info = _font.Info;
+        int h = ThumbHeight;
         var req = new ThumbnailRequest(info.Path, info.FaceIndex, info.Family, info.Weight, info.IsItalic,
-            Stamp(), text, ThumbSize, ThumbWidth, ThumbHeight);
+            Stamp(), text, ListSize, ThumbWidth, h);
 
         _ = Task.Run(async () =>
         {
@@ -102,7 +128,7 @@ public sealed class FontItem : INotifyPropertyChanged
                 _ui.TryEnqueue(() =>
                 {
                     if (cts.IsCancellationRequested) return;
-                    _thumb = Tint(mask);
+                    _thumb = Tint(mask, h);
                     Raise(nameof(Thumbnail));
                 });
             }
@@ -116,7 +142,7 @@ public sealed class FontItem : INotifyPropertyChanged
         });
     }
 
-    private static WriteableBitmap Tint(byte[] mask)
+    private static WriteableBitmap Tint(byte[] mask, int height)
     {
         var px = new byte[mask.Length * 4];
         byte ink = InkLevel;
@@ -127,7 +153,7 @@ public sealed class FontItem : INotifyPropertyChanged
             px[i * 4] = px[i * 4 + 1] = px[i * 4 + 2] = c;
             px[i * 4 + 3] = a;
         }
-        var bmp = new WriteableBitmap(ThumbWidth, ThumbHeight);
+        var bmp = new WriteableBitmap(ThumbWidth, height);
         px.CopyTo(0, bmp.PixelBuffer, 0, px.Length);
         bmp.Invalidate();
         return bmp;
@@ -136,7 +162,11 @@ public sealed class FontItem : INotifyPropertyChanged
     public bool IsFavorite
     {
         get => _favorite;
-        set { _favorite = value; _lib.SetFavorite(_font.Id, value); Raise(); }
+        set
+        {
+            _favorite = value; _lib.SetFavorite(_font.Id, value);
+            Raise(); Raise(nameof(FavoriteGlyph)); Raise(nameof(FavoriteOpacity));
+        }
     }
 
     /// <summary>Remembered across runs: activated at startup and left active when FontA closes.</summary>
@@ -149,7 +179,7 @@ public sealed class FontItem : INotifyPropertyChanged
             _lib.SetAlwaysActive(_font.Id, value);
             _lib.TouchUsed(_font.Id);
             if (value && !IsActive) IsActive = true;
-            Raise();
+            Raise(); Raise(nameof(AlwaysOpacity));
         }
     }
 
