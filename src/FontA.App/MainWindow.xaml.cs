@@ -69,7 +69,7 @@ public sealed partial class MainWindow : Window
         Closed += (_, _) =>
         {
             _wheelHook?.Dispose();
-            CancelQuietly(_scanCts); CancelQuietly(_pruneCts);
+            CancelQuietly(_scanCts); CancelQuietly(_pruneCts); CancelQuietly(_docCts);
             _watcher.Dispose(); _tray.Dispose();
             // An activation still running would keep adding fonts after the clean-up below has looked at what is active.
             CancelQuietly(_activationCts);
@@ -205,13 +205,19 @@ public sealed partial class MainWindow : Window
         return error;
     }
 
-    public async Task AddFolderViaPickerAsync()
+    private async Task<string?> PickFolderAsync()
     {
         var picker = new FolderPicker { SuggestedStartLocation = PickerLocationId.DocumentsLibrary };
         picker.FileTypeFilter.Add("*");
         InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
-        var folder = await picker.PickSingleFolderAsync();
-        if (folder == null) return;
+        return (await picker.PickSingleFolderAsync())?.Path;
+    }
+
+    public async Task AddFolderViaPickerAsync()
+    {
+        var path = await PickFolderAsync();
+        if (path == null) return;
+        var folder = new { Path = path };
 
         _lib.AddFolder(folder.Path);            // remembered: rescanned at startup and watched for changes
         _watcher.Sync(_lib.Folders(), _settings.WatchFolders);
@@ -617,30 +623,132 @@ public sealed partial class MainWindow : Window
 
     public void CheckUnusedNow() => RunUnusedCheck(manual: true, refresh: true);
 
-    private void RunUnusedCheck(bool manual, bool refresh)
+    private async void RunUnusedCheck(bool manual, bool refresh) => await RunUnusedCheckAsync(manual, refresh);
+
+    private bool _unusedBusy;
+
+    private async Task RunUnusedCheckAsync(bool manual, bool refresh)
     {
         if (!manual && !_settings.UnusedEnabled) return;
-        int days = _settings.UnusedDays;
-        var done = UnusedFontPolicy.Apply(_lib, _activator, TimeSpan.FromDays(days), DateTimeOffset.UtcNow);
-        _lastDeactivated = done.ToList();
-
-        if (done.Count == 0)
+        if (_unusedBusy) return;
+        _unusedBusy = true;
+        try
         {
-            if (!manual) return;
-            UnusedBar.Title = "Nothing to deactivate";
-            UnusedBar.Message = $"Every active font was used within the last {days} days.";
-            UndoUnusedButton.Visibility = Visibility.Collapsed;
+            int days = _settings.UnusedDays;
+            var now = DateTimeOffset.UtcNow;
+
+            // Read the documents first: a font a document uses counts as used. Only a check that looked at everything it
+            // was supposed to can say a font is unused, so a missing folder or online-only file pauses deactivating.
+            if (_settings.DocumentScanEnabled)
+            {
+                var scan = await ScanDocumentsAsync(now);
+                if (scan == null) return;
+                if (!scan.Complete)
+                {
+                    UnusedBar.Title = "Unused-font check paused";
+                    UnusedBar.Message = "Nothing was deactivated because " + DescribeGaps(scan) + " Fix that, or turn off document checking, and check again.";
+                    UndoUnusedButton.Visibility = Visibility.Collapsed;
+                    UnusedBar.IsOpen = true;
+                    return;
+                }
+            }
+
+            var done = UnusedFontPolicy.Apply(_lib, _activator, TimeSpan.FromDays(days), now);
+            _lastDeactivated = done.ToList();
+
+            if (done.Count == 0)
+            {
+                if (!manual) return;
+                UnusedBar.Title = "Nothing to deactivate";
+                UnusedBar.Message = $"Every active font was used within the last {days} days.";
+                UndoUnusedButton.Visibility = Visibility.Collapsed;
+                UnusedBar.IsOpen = true;
+                return;
+            }
+
+            var names = done.Select(d => Path.GetFileNameWithoutExtension(d.Path)).Take(3).ToList();
+            string list = string.Join(", ", names) + (done.Count > 3 ? $" and {done.Count - 3} more" : "");
+            UnusedBar.Title = done.Count == 1 ? "1 unused font deactivated" : $"{done.Count} unused fonts deactivated";
+            UnusedBar.Message = $"Not used in {days} days{(_settings.DocumentScanEnabled ? " (in FontA or your documents)" : "")}: {list}. Pin a font (Always) to keep it.";
+            UndoUnusedButton.Visibility = Visibility.Visible;
             UnusedBar.IsOpen = true;
-            return;
+            if (refresh) { RebuildNav(); Refresh(); }
+        }
+        finally { _unusedBusy = false; }
+    }
+
+    private static string DescribeGaps(DocumentScanResult r)
+    {
+        var parts = new List<string>();
+        if (r.MissingFolders > 0) parts.Add(r.MissingFolders == 1 ? "a document folder isn't available right now" : $"{r.MissingFolders} document folders aren't available right now");
+        if (r.OnlineOnly > 0) parts.Add(r.OnlineOnly == 1 ? "a recent document is only in the cloud and wasn't downloaded to check" : $"{r.OnlineOnly} recent documents are only in the cloud and weren't downloaded to check");
+        if (r.Cancelled) parts.Add("the check was interrupted");
+        return string.Join(" and ", parts) + ".";
+    }
+
+    // ---- fonts used by documents ----
+    private CancellationTokenSource? _docCts;
+
+    /// <summary>What the settings page shows under "Documents".</summary>
+    public string DocumentStatus { get; private set; } = "";
+    public event Action? DocumentStatusChanged;
+
+    /// <summary>Reads the documents and records the fonts they use. Returns null when another read was already running or was cancelled.</summary>
+    private async Task<DocumentScanResult?> ScanDocumentsAsync(DateTimeOffset now)
+    {
+        CancelQuietly(_docCts);
+        var cts = _docCts = new CancellationTokenSource();
+        var lookback = TimeSpan.FromDays(_settings.UnusedDays);
+        bool useRecent = _settings.UseRecentDocuments;
+        DocumentStatus = "Reading documents…";
+        DocumentStatusChanged?.Invoke();
+        DocumentScanResult result;
+        try
+        {
+            result = await Task.Run(() =>
+            {
+                var recent = useRecent ? RecentDocuments.Read(RecentDocuments.DefaultFolder, now - lookback) : null;
+                return _lib.ScanDocuments(lookback, now, recent, null, cts.Token);
+            });
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            DocumentStatus = "Couldn't read the documents: " + ex.Message;
+            DocumentStatusChanged?.Invoke();
+            return null;
         }
 
-        var names = done.Select(d => Path.GetFileNameWithoutExtension(d.Path)).Take(3).ToList();
-        string list = string.Join(", ", names) + (done.Count > 3 ? $" and {done.Count - 3} more" : "");
-        UnusedBar.Title = done.Count == 1 ? "1 unused font deactivated" : $"{done.Count} unused fonts deactivated";
-        UnusedBar.Message = $"Not used in {days} days: {list}.";
-        UndoUnusedButton.Visibility = Visibility.Visible;
-        UnusedBar.IsOpen = true;
-        if (refresh) { RebuildNav(); Refresh(); }
+        if (cts.IsCancellationRequested && !ReferenceEquals(cts, _docCts)) return null;   // replaced by a newer read
+        if (result.Complete) _settings.DocumentsCheckedAt = now.ToUnixTimeSeconds();
+        DocumentStatus = result.Complete
+            ? $"Last checked {DateTimeOffset.Now:d MMM HH:mm}: {result.Read + result.Unchanged} documents, {result.FontsMarked} font uses found."
+            : "Couldn't check everything: " + DescribeGaps(result);
+        DocumentStatusChanged?.Invoke();
+        if (result.FontsMarked > 0) { RebuildNav(); Refresh(); }
+        return result;
+    }
+
+    /// <summary>Called by the settings page when document checking is switched on or its folders change.</summary>
+    public async void OnDocumentSettingsChanged()
+    {
+        if (!_settings.DocumentScanEnabled) { CancelQuietly(_docCts); DocumentStatus = ""; DocumentStatusChanged?.Invoke(); return; }
+        await ScanDocumentsAsync(DateTimeOffset.UtcNow);
+    }
+
+    public async Task AddDocumentFolderViaPickerAsync()
+    {
+        var path = await PickFolderAsync();
+        if (path == null) return;
+        _lib.AddDocumentFolder(path);
+        FoldersChanged?.Invoke();
+        OnDocumentSettingsChanged();
+    }
+
+    public void RemoveDocumentFolder(string path)
+    {
+        _lib.RemoveDocumentFolder(path);
+        FoldersChanged?.Invoke();
+        OnDocumentSettingsChanged();
     }
 
     private void OnUndoUnused(object s, RoutedEventArgs e)

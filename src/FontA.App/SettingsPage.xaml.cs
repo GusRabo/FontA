@@ -21,8 +21,49 @@ public sealed partial class SettingsPage : UserControl
 
         LoadValues();
         RebuildFolders();
-        main.FoldersChanged += RebuildFolders;
+        RebuildDocumentFolders();
+        main.FoldersChanged += () => { RebuildFolders(); RebuildDocumentFolders(); };
+        main.DocumentStatusChanged += ShowDocumentStatus;
+        ShowDocumentStatus();
         _loading = false;
+    }
+
+    private void ShowDocumentStatus() => DocStatusText.Text = _main.DocumentStatus;
+
+    private async void OnAddDocumentFolder(object sender, RoutedEventArgs e) => await _main.AddDocumentFolderViaPickerAsync();
+
+    private void OnScanDocuments(object sender, RoutedEventArgs e) => _main.OnDocumentSettingsChanged();
+
+    private void RebuildDocumentFolders()
+    {
+        DocFolderList.Children.Clear();
+        var folders = _main.Library.DocumentFolders();
+        if (folders.Count == 0)
+        {
+            DocFolderList.Children.Add(new TextBlock { Text = "No folders yet. Add the places you keep your Illustrator, InDesign, Photoshop and After Effects projects.", Opacity = 0.7, TextWrapping = TextWrapping.Wrap });
+            return;
+        }
+        foreach (var folder in folders)
+        {
+            var row = new Grid { ColumnSpacing = 12, MinHeight = 40 };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+            text.Children.Add(new TextBlock { Text = folder, TextTrimming = TextTrimming.CharacterEllipsis });
+            if (!Directory.Exists(folder))
+                text.Children.Add(new TextBlock
+                {
+                    Text = "Not available right now. Fonts won't be deactivated until it returns or you remove it.",
+                    Opacity = 0.7,
+                    Style = (Style)Application.Current.Resources["CaptionTextBlockStyle"]
+                });
+            row.Children.Add(text);
+            var remove = new Button { Content = "Remove" };
+            remove.Click += (_, _) => _main.RemoveDocumentFolder(folder);
+            Grid.SetColumn(remove, 1);
+            row.Children.Add(remove);
+            DocFolderList.Children.Add(row);
+        }
     }
 
     private void LoadValues()
@@ -35,6 +76,9 @@ public sealed partial class SettingsPage : UserControl
         HiddenToggle.IsOn = _settings.StartHidden;
         ExitToggle.IsOn = _settings.DeactivateOnExit;
         UnusedToggle.IsOn = _settings.UnusedEnabled;
+        DocsToggle.IsOn = _settings.DocumentScanEnabled;
+        RecentToggle.IsOn = _settings.UseRecentDocuments;
+        DocsPanel.Visibility = DocsToggle.IsOn ? Visibility.Visible : Visibility.Collapsed;
         UpdateToggle.IsOn = _settings.AutoUpdate && _main.Updates.IsReady;
         UpdateToggle.IsEnabled = CheckUpdatesButton.IsEnabled = _main.Updates.IsReady;
         UpdateNote.Text = _main.Updates.Describe();
@@ -56,6 +100,8 @@ public sealed partial class SettingsPage : UserControl
         else if (toggle == HiddenToggle) _settings.StartHidden = on;
         else if (toggle == ExitToggle) _settings.DeactivateOnExit = on;
         else if (toggle == UnusedToggle) _settings.UnusedEnabled = on;
+        else if (toggle == DocsToggle) { _settings.DocumentScanEnabled = on; DocsPanel.Visibility = on ? Visibility.Visible : Visibility.Collapsed; _main.OnDocumentSettingsChanged(); }
+        else if (toggle == RecentToggle) { _settings.UseRecentDocuments = on; _main.OnDocumentSettingsChanged(); }
         else if (toggle == UpdateToggle) _settings.AutoUpdate = on;
 
         var error = _main.ApplyBehaviorSettings();

@@ -4,7 +4,7 @@ using Microsoft.Data.Sqlite;
 namespace FontA.Core.Library;
 
 /// <summary>SQLite-backed index of scanned fonts plus user organisation (favorites, tags, collections).</summary>
-public sealed class FontLibrary : IDisposable
+public sealed partial class FontLibrary : IDisposable
 {
     private static readonly HashSet<string> Extensions = new(StringComparer.OrdinalIgnoreCase)
         { ".ttf", ".otf", ".ttc", ".otc" };
@@ -13,7 +13,7 @@ public sealed class FontLibrary : IDisposable
     /// Bump this and add a step to <see cref="Migrate"/> whenever the database layout changes. Every step must be safe
     /// to run on a database that already has the change, because databases from before versioning start at 0.
     /// </summary>
-    public const int SchemaVersion = 2;
+    public const int SchemaVersion = 3;
 
     private readonly SqliteConnection _db;
     private readonly string _connectionString;
@@ -59,6 +59,7 @@ public sealed class FontLibrary : IDisposable
             """);
         EnsureColumn("always_active", "INTEGER NOT NULL DEFAULT 0");
         EnsureColumn("last_used", "INTEGER NOT NULL DEFAULT 0");   // unix seconds; 0 = not recorded yet
+        EnsureColumn("ps_name", "TEXT NOT NULL DEFAULT ''");        // PostScript name, how documents refer to a font; '' = not read yet
         Exec("CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL)");
         Migrate(found);
         Exec($"PRAGMA user_version={SchemaVersion}");
@@ -69,6 +70,11 @@ public sealed class FontLibrary : IDisposable
     {
         // v2: remembered font folders.
         Exec("CREATE TABLE IF NOT EXISTS folders(path TEXT PRIMARY KEY)");
+        // v3: folders of documents to read for the fonts they use, and what was already read from each file.
+        Exec("""
+            CREATE TABLE IF NOT EXISTS doc_folders(path TEXT PRIMARY KEY);
+            CREATE TABLE IF NOT EXISTS doc_files(path TEXT PRIMARY KEY, mtime INTEGER NOT NULL, size INTEGER NOT NULL, fonts TEXT NOT NULL DEFAULT '');
+            """);
     }
 
     // ---- remembered font folders ----
@@ -158,6 +164,18 @@ public sealed class FontLibrary : IDisposable
             }
         tx.Commit();
         return started;
+    }
+
+    /// <summary>Raises the last-use time of these files, never lowers it (a document saved long ago must not make a font look older).</summary>
+    public void NoteUsedPaths(IEnumerable<string> paths, DateTimeOffset at) => NoteUsedPaths(_db, paths, at);
+
+    private static void NoteUsedPaths(SqliteConnection db, IEnumerable<string> paths, DateTimeOffset at)
+    {
+        foreach (var path in paths)
+        {
+            using var c = Cmd(db, "UPDATE fonts SET last_used=$t WHERE path=$p AND last_used<$t", ("$t", at.ToUnixTimeSeconds()), ("$p", path));
+            c.ExecuteNonQuery();
+        }
     }
 
     /// <summary>Records use for many files in one go (for example when a whole folder is activated).</summary>
@@ -328,11 +346,11 @@ public sealed class FontLibrary : IDisposable
     private static void Upsert(SqliteConnection db, FontInfo f, long mtime)
     {
         using var c = Cmd(db, """
-        INSERT INTO fonts(path,face,family,style,full_name,weight,italic,axes,features,mtime)
-        VALUES($p,$i,$fam,$sty,$full,$w,$it,$ax,$ft,$m)
-        ON CONFLICT(path,face) DO UPDATE SET family=$fam,style=$sty,full_name=$full,weight=$w,italic=$it,axes=$ax,features=$ft,mtime=$m
+        INSERT INTO fonts(path,face,family,style,full_name,weight,italic,axes,features,mtime,ps_name)
+        VALUES($p,$i,$fam,$sty,$full,$w,$it,$ax,$ft,$m,$ps)
+        ON CONFLICT(path,face) DO UPDATE SET family=$fam,style=$sty,full_name=$full,weight=$w,italic=$it,axes=$ax,features=$ft,mtime=$m,ps_name=$ps
         """,
-        ("$p", f.Path), ("$i", f.FaceIndex), ("$fam", f.Family), ("$sty", f.Style), ("$full", f.FullName),
+        ("$ps", f.PostScriptName), ("$p", f.Path), ("$i", f.FaceIndex), ("$fam", f.Family), ("$sty", f.Style), ("$full", f.FullName),
         ("$w", f.Weight), ("$it", f.IsItalic ? 1 : 0),
         ("$ax", string.Join(';', f.Axes.Select(a => $"{a.Tag},{a.Min},{a.Default},{a.Max}"))),
         ("$ft", string.Join(',', f.Features)), ("$m", mtime));
@@ -351,7 +369,7 @@ public sealed class FontLibrary : IDisposable
         if (tag != null) { where.Add("id IN (SELECT font_id FROM tags WHERE tag=$t)"); args.Add(("$t", tag)); }
         if (collectionId != null) { where.Add("id IN (SELECT font_id FROM collection_fonts WHERE collection_id=$c)"); args.Add(("$c", collectionId)); }
 
-        using var cmd = Command($"SELECT id,path,face,family,style,full_name,weight,italic,axes,features,favorite,always_active,EXISTS(SELECT 1 FROM installs i WHERE i.source=fonts.path) FROM fonts WHERE {string.Join(" AND ", where)} {(recentOnly ? $"ORDER BY last_used DESC LIMIT {RecentLimit}" : "ORDER BY family,weight,style")}", args.ToArray());
+        using var cmd = Command($"SELECT id,path,face,family,style,full_name,weight,italic,axes,features,favorite,always_active,EXISTS(SELECT 1 FROM installs i WHERE i.source=fonts.path),ps_name FROM fonts WHERE {string.Join(" AND ", where)} {(recentOnly ? $"ORDER BY last_used DESC LIMIT {RecentLimit}" : "ORDER BY family,weight,style")}", args.ToArray());
         using var r = cmd.ExecuteReader();
         var list = new List<LibraryFont>();
         while (r.Read())
@@ -363,7 +381,7 @@ public sealed class FontLibrary : IDisposable
                     float.Parse(p[3], System.Globalization.CultureInfo.InvariantCulture))).ToList();
             var feats = r.IsDBNull(9) || r.GetString(9) == "" ? new List<string>() : r.GetString(9).Split(',').ToList();
             list.Add(new LibraryFont(r.GetInt64(0), new FontInfo(r.GetString(1), r.GetInt32(2), r.GetString(3), r.GetString(4),
-                r.GetString(5), r.GetInt32(6), r.GetInt32(7) != 0, axes, feats), r.GetInt32(10) != 0, r.GetInt32(11) != 0, r.GetInt32(12) != 0));
+                r.GetString(5), r.GetInt32(6), r.GetInt32(7) != 0, axes, feats, r.GetString(13) is var ps && ps != "-" ? ps : ""), r.GetInt32(10) != 0, r.GetInt32(11) != 0, r.GetInt32(12) != 0));
         }
         return list;
     }

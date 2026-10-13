@@ -90,13 +90,43 @@
         <StackPanel VerticalAlignment="Center">
           <TextBlock Text="Deactivate fonts I haven't used"/>
           <TextBlock TextWrapping="Wrap" Opacity="0.7" Style="{StaticResource CaptionTextBlockStyle}"
-                     Text="A font counts as used when you preview it, activate or deactivate it, or change its Always setting in FontA. FontA can't see use inside other apps. Installed fonts are never touched, and each run can be undone."/>
+                     Text="A font counts as used when you preview it, activate or deactivate it, or change its Always setting in FontA, or when a document you read below uses it. Windows doesn't tell FontA what other apps use. Installed fonts are never touched, and each run can be undone."/>
         </StackPanel>
         <ToggleSwitch x:Name="UnusedToggle" Grid.Column="1" OnContent="" OffContent="" MinWidth="0" Toggled="OnToggled"/>
       </Grid>
       <NumberBox x:Name="DaysBox" Header="Days without use" Minimum="1" Maximum="365" Value="30" Width="200"
                  HorizontalAlignment="Left" SpinButtonPlacementMode="Inline" ValueChanged="OnDaysChanged" Margin="0,4,0,0"/>
       <Button Content="Check now" Click="OnCheckNow" Margin="0,8,0,0"/>
+
+      <!-- Fonts used by documents -->
+      <TextBlock Text="Fonts your documents use" Style="{StaticResource SubtitleTextBlockStyle}" Margin="0,20,0,4"/>
+      <TextBlock TextWrapping="Wrap" Opacity="0.7"
+                 Text="Illustrator, InDesign, Photoshop, After Effects and PDF files record the fonts they use. FontA reads them, matches the names against your library and counts those fonts as used on the day the file was saved or opened. Only font names are kept. Your documents are never changed, copied or uploaded."/>
+      <Grid MinHeight="44" Margin="0,4,0,0">
+        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+        <TextBlock Text="Count fonts used in my documents" VerticalAlignment="Center"/>
+        <ToggleSwitch x:Name="DocsToggle" Grid.Column="1" OnContent="" OffContent="" MinWidth="0" Toggled="OnToggled"/>
+      </Grid>
+      <StackPanel x:Name="DocsPanel" Spacing="2">
+        <TextBlock Text="Folders with your projects" Margin="0,4,0,0"/>
+        <StackPanel x:Name="DocFolderList" Spacing="2" Margin="0,4,0,4"/>
+        <Button Content="Add document folder…" Click="OnAddDocumentFolder"/>
+        <Grid MinHeight="44" Margin="0,8,0,0">
+          <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+          <StackPanel VerticalAlignment="Center">
+            <TextBlock Text="Include documents I opened recently"/>
+            <TextBlock TextWrapping="Wrap" Opacity="0.7" Style="{StaticResource CaptionTextBlockStyle}"
+                       Text="Files Windows lists under Recent, wherever they are, so a document you only looked at (and didn't save) still counts."/>
+          </StackPanel>
+          <ToggleSwitch x:Name="RecentToggle" Grid.Column="1" OnContent="" OffContent="" MinWidth="0" Toggled="OnToggled"/>
+        </Grid>
+        <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,8,0,0">
+          <Button Content="Read documents now" Click="OnScanDocuments"/>
+          <TextBlock x:Name="DocStatusText" VerticalAlignment="Center" TextWrapping="Wrap" Opacity="0.85"/>
+        </StackPanel>
+        <TextBlock TextWrapping="Wrap" Opacity="0.7" Style="{StaticResource CaptionTextBlockStyle}" Margin="0,8,0,0"
+                   Text="What this can't see: a document that is open but not saved, and work done on another PC unless its files sync into a folder above. If a folder is unavailable or a recent file is only in the cloud, FontA doesn't deactivate anything until it can check."/>
+      </StackPanel>
 
       <Rectangle Height="1" Fill="{ThemeResource DividerStrokeColorDefaultBrush}" Margin="0,12"/>
 

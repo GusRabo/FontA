@@ -59,6 +59,19 @@ public sealed class AppSettings
         set => _lib.SetSetting("unused.days", Math.Clamp(value, MinUnusedDays, MaxUnusedDays).ToString());
     }
 
+    /// <summary>Also count fonts used in design documents (Illustrator, InDesign, Photoshop, After Effects, PDF) when deciding what is unused.</summary>
+    public bool DocumentScanEnabled { get => Get("docs.enabled", false); set => Set("docs.enabled", value); }
+
+    /// <summary>Include documents Windows lists as recently opened, not only the ones in the chosen folders.</summary>
+    public bool UseRecentDocuments { get => Get("docs.recent", true); set => Set("docs.recent", value); }
+
+    /// <summary>When the last document check finished with nothing left unchecked, as unix seconds (0 = never).</summary>
+    public long DocumentsCheckedAt
+    {
+        get => long.TryParse(_lib.GetSetting("docs.checkedAt"), out var t) ? t : 0;
+        set => _lib.SetSetting("docs.checkedAt", value.ToString());
+    }
+
     private bool Get(string key, bool fallback) => _lib.GetSetting(key) switch { "1" => true, "0" => false, _ => fallback };
     private void Set(string key, bool value) => _lib.SetSetting(key, value ? "1" : "0");
 }

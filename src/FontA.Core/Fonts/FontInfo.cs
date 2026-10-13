@@ -11,7 +11,8 @@ public sealed record FontInfo(
     int Weight,
     bool IsItalic,
     IReadOnlyList<VariationAxis> Axes,
-    IReadOnlyList<string> Features)
+    IReadOnlyList<string> Features,
+    string PostScriptName = "")
 {
     public bool IsVariable => Axes.Count > 0;
 }

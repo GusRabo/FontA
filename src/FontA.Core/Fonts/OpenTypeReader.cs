@@ -127,7 +127,7 @@ public static class OpenTypeReader
             if (tables.TryGetValue(t, out var g) && g.Len >= 10)
                 ReadFeatureTags(d, g.Off, features);
 
-        return new FontInfo(path, faceIndex, family, style, full, weight, italic, axes, features.ToList());
+        return new FontInfo(path, faceIndex, family, style, full, weight, italic, axes, features.ToList(), names.GetValueOrDefault(6) ?? "");
     }
 
     private static void ReadFeatureTags(byte[] d, int tableOff, SortedSet<string> into)
