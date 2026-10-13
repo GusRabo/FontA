@@ -11,6 +11,12 @@ public sealed class FontActivator
     private readonly object _gate = new();
     private readonly HashSet<string> _active = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>How many fonts are switched in one go before FontA lets Windows and its own window catch up.</summary>
+    public int BatchSize { get; set; } = 100;
+
+    /// <summary>The rest between batches. Windows tells every running app about each font it adds, so a long unbroken run can leave busy apps (and FontA's own window) struggling to keep up.</summary>
+    public TimeSpan BatchPause { get; set; } = TimeSpan.FromMilliseconds(250);
+
     /// <summary>Raised (on whichever thread made the change) after fonts were switched on or off. Used to keep the journal current.</summary>
     public event Action? Changed;
 
@@ -76,6 +82,7 @@ public sealed class FontActivator
             }
             done++;
             if (progress != null && (done % 25 == 0 || done == list.Count)) progress.Report((done, list.Count));
+            if (done % BatchSize == 0 && done < list.Count) ct.WaitHandle.WaitOne(BatchPause);   // wakes early if cancelled
         }
         if (changed) { Broadcast(); Changed?.Invoke(); }
         lock (_gate) return _active.Count;
@@ -100,6 +107,7 @@ public sealed class FontActivator
             }
             done++;
             if (progress != null && (done % 25 == 0 || done == list.Count)) progress.Report((done, list.Count));
+            if (done % BatchSize == 0 && done < list.Count) ct.WaitHandle.WaitOne(BatchPause);
         }
         if (removed > 0) { Broadcast(); Changed?.Invoke(); }
         return removed;
