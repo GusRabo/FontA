@@ -73,7 +73,7 @@ jobs:
         # To sign builds, add a certificate and pass --signParams here (see the README).
         run: >
           dotnet vpk pack --packId ${{ env.PACK_ID }} --packVersion ${{ steps.version.outputs.value }}
-          --packDir publish --mainExe FontA.App.exe --packTitle FontA --icon assets/fonta.ico
+          --packDir publish --mainExe FontA.App.exe --packTitle FontA --packAuthors FontA --icon assets/fonta.ico --splashImage assets/fonta-splash.png --splashProgressColor "#7C3AED" --shortcuts Desktop,StartMenuRoot
 
       # This repository uses GitHub's immutable releases: once a release is published, nothing can be added to it or
       # changed. So everything is attached to a DRAFT first, and the release is only published as the very last step.
