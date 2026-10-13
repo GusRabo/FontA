@@ -7,4 +7,12 @@
     -->
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
   </PropertyGroup>
+  <PropertyGroup>
+    <Product>FontA</Product>
+    <Authors>GusRabo</Authors>
+    <Company>GusRabo</Company>
+    <Copyright>Copyright (C) 2026 GusRabo and FontA contributors. Licensed under the GNU GPL v3.</Copyright>
+    <Description>A fast, native Windows font manager.</Description>
+    <RepositoryUrl>https://github.com/GusRabo/FontA</RepositoryUrl>
+  </PropertyGroup>
 </Project>

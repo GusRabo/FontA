@@ -37,7 +37,8 @@ FontA reads files and folders from places you don't control, so it assumes they 
 - **Windows renders the fonts.** Previews and activation use Windows' own font engine (DirectWrite and GDI), which runs
   inside FontA's process. A flaw in Windows itself could be reached through a specially crafted font that passes
   FontA's own checks. Keep Windows up to date, and don't add folders you don't trust.
-- **Builds are not code-signed yet**, so Windows SmartScreen may warn on first run. Verify a download against the
-  `SHA256SUMS.txt` attached to each release.
+- **Builds are not code-signed yet**, so Windows SmartScreen may warn on first run, and Windows 11's Smart App Control
+  (when it is on) blocks the installer. Verify a download against the `SHA256SUMS.txt` attached to each release. The
+  signing plan is in [CODE_SIGNING.md](CODE_SIGNING.md); the privacy policy is in [PRIVACY.md](PRIVACY.md).
 - **The update channel is only as safe as the GitHub account behind it.** Protect that account (two-factor
   authentication) and the repository's `v*` tags; see the README's security section.

@@ -138,6 +138,18 @@ Everything is stored per user in `%LOCALAPPDATA%\FontA`:
 
 Your original font files are never modified. They are only copied if you use **Install**.
 
+## Privacy
+
+FontA keeps everything on your PC and has no accounts, ads or telemetry. Its only network request is the update check
+to GitHub, which you can switch off in Settings. The full policy is in [PRIVACY.md](PRIVACY.md).
+
+## Code signing policy
+
+Releases are **not code-signed yet**; FontA is applying for free code signing from the SignPath Foundation. Until
+then, Windows SmartScreen or Smart App Control can warn about or block the installer. Only code built from this
+repository by its release workflow is ever signed, and every signing request is approved by hand. See
+[CODE_SIGNING.md](CODE_SIGNING.md) for the policy, who holds which role, and how to check a signature.
+
 ## Security
 
 FontA reads files and folders you don't control, runs entirely as you (it never needs administrator rights), and updates
@@ -158,7 +170,8 @@ is in [SECURITY.md](SECURITY.md). In short:
   publishes. Each release carries `SHA256SUMS.txt`.
 
 **Honest limits:** Windows' own font engine renders the previews, so a flaw in Windows could be reached through a font
-that passes FontA's checks (keep Windows updated and only add folders you trust). Builds are not code-signed yet.
+that passes FontA's checks (keep Windows updated and only add folders you trust). Builds are not code-signed yet (see
+[Code signing policy](#code-signing-policy)).
 
 ### Protect the update channel (do this on GitHub)
 
@@ -249,8 +262,11 @@ repository) to publish.
 ### Signing (recommended, optional)
 
 Without a code-signing certificate, Windows SmartScreen shows a warning the first time someone runs `Setup.exe`, and
-more so for a new, little-downloaded app. Velopack supports signing: add `--signParams "..."` to the `vpk pack` step in
-`.github/workflows/release.yml` and store the certificate as a repository secret. Everything works without it.
+Windows 11's **Smart App Control** (when it is on) blocks unsigned programs outright: the installer then ends with
+"Install Partially Succeeded" and FontA will not start. The plan is free signing through the SignPath Foundation; see
+[CODE_SIGNING.md](CODE_SIGNING.md). Velopack also supports signing directly: add `--signParams "..."` to the
+`vpk pack` step in `.github/workflows/release.yml` and store the certificate as a repository secret. Everything else
+works without signing, except on PCs where Smart App Control is on.
 
 ### Testing updates without GitHub
 
