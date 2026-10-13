@@ -27,6 +27,8 @@ public partial class App : Application
         InitializeComponent();
         // WinUI otherwise dies with an opaque native crash code; keep the real exception where it can be found.
         UnhandledException += (_, e) => LogCrash(e.Exception);
+        AppDomain.CurrentDomain.UnhandledException += (_, e) => LogCrash(e.ExceptionObject as Exception);
+        TaskScheduler.UnobservedTaskException += (_, e) => LogCrash(e.Exception);
     }
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)

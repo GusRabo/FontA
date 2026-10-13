@@ -99,6 +99,17 @@ public sealed partial class MainWindow : Window
         RebuildNav();
         Refresh();
         _ = ActivateAlwaysActiveAsync();
+#if DEBUG
+        // Test hook: FONTA_DEBUG_ACTIVATE=<folder> switches on every indexed font under that folder once the window is up.
+        if (Environment.GetEnvironmentVariable("FONTA_DEBUG_ACTIVATE") is { Length: > 0 } dbgFolder)
+            DispatcherQueue.TryEnqueue(async () =>
+            {
+                await Task.Delay(8000);
+                var prefix = dbgFolder.TrimEnd('\\') + "\\";
+                await RunActivationAsync(_lib.Search().Select(f => f.Info.Path).Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Where(p => p.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)).ToList(), activate: true);
+            });
+#endif
         _ = PruneMissingInBackground();
         RegisterShortcuts();
         SetUpWheel();
