@@ -49,6 +49,7 @@ public sealed partial class MainWindow : Window
         Directory.CreateDirectory(dir);
         _lib = new FontLibrary(Path.Combine(dir, "library.db"));
         _settings = new AppSettings(_lib);
+        _lib.HideSystemFonts = !_settings.ShowSystemFonts;
         _journal = new ActiveSessionJournal(Path.Combine(dir, "active-fonts.txt"));
         // If an earlier run was killed or crashed, Windows still has its fonts switched on: pick them up so they show as active.
         _activator.Adopt(_journal.LoadIfSameSession());
@@ -432,8 +433,19 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>Scans run one at a time. Folder-change scans are quiet; scans the person asked for show progress.</summary>
+    /// <summary>Applies the "show fonts installed in Windows" setting to every view.</summary>
+    public void ApplySystemFontVisibility()
+    {
+        _lib.HideSystemFonts = !_settings.ShowSystemFonts;
+        if (_nav.Kind == NavKind.Folder && _nav.Key == FolderGrouping.SystemKey) _nav = new(NavKind.All, "All");
+        RebuildNav();
+        Refresh();
+    }
+
     private void EnqueueScan(string path, bool quiet)
     {
+        // No point reading the Windows fonts folder while its fonts are hidden.
+        if (_lib.HideSystemFonts && FolderGrouping.IsSystemFolder(path)) return;
         if (_scanQueue.Any(q => string.Equals(q.Path, path, StringComparison.OrdinalIgnoreCase))) return;
         _scanQueue.Enqueue((path, quiet));
         if (!_scanQueueRunning) _ = ProcessScanQueue();

@@ -18,11 +18,21 @@ public sealed class FontLibrary : IDisposable
     private readonly SqliteConnection _db;
     private readonly string _connectionString;
 
+    private volatile bool _hideSystem;
+
+    /// <summary>
+    /// When true, fonts that live in the Windows fonts folders (the ones Windows itself installed) are left out of every
+    /// view, count and list. Nothing is deleted: turning it off brings them straight back.
+    /// </summary>
+    public bool HideSystemFonts { get => _hideSystem; set => _hideSystem = value; }
+
     public FontLibrary(string dbPath)
     {
         _connectionString = $"Data Source={dbPath}";
         _db = new SqliteConnection(_connectionString);
         _db.Open();
+        // Lets queries leave out fonts living in the Windows fonts folders (see HideSystemFonts).
+        _db.CreateFunction("is_hidden", (string? path) => _hideSystem && path != null && FolderGrouping.IsSystemFolder(FolderGrouping.FolderOf(path)) ? 1 : 0);
 
         // A newer FontA may have changed the layout in ways this version doesn't understand. Refuse rather than damage it.
         int found = Scalar<int>("PRAGMA user_version");
@@ -167,7 +177,7 @@ public sealed class FontLibrary : IDisposable
     /// <summary>One row per font file with how many library entries it holds (a .ttc holds several). Cheap even for huge libraries.</summary>
     public IReadOnlyList<(string Path, int Count)> PathCounts()
     {
-        using var c = Command("SELECT path, COUNT(*) FROM fonts GROUP BY path");
+        using var c = Command("SELECT path, COUNT(*) FROM fonts WHERE NOT is_hidden(path) GROUP BY path");
         using var r = c.ExecuteReader();
         var list = new List<(string, int)>();
         while (r.Read()) list.Add((r.GetString(0), r.GetInt32(1)));
@@ -184,7 +194,7 @@ public sealed class FontLibrary : IDisposable
                    COALESCE(SUM(always_active),0),
                    COALESCE(SUM(EXISTS(SELECT 1 FROM installs i WHERE i.source=fonts.path)),0),
                    COALESCE(SUM(last_used>0),0)
-            FROM fonts
+            FROM fonts WHERE NOT is_hidden(path)
             """);
         using var r = c.ExecuteReader();
         r.Read();
@@ -193,7 +203,7 @@ public sealed class FontLibrary : IDisposable
 
     public IReadOnlyDictionary<long, int> CollectionCounts()
     {
-        using var c = Command("SELECT collection_id, COUNT(*) FROM collection_fonts GROUP BY collection_id");
+        using var c = Command("SELECT cf.collection_id, COUNT(*) FROM collection_fonts cf JOIN fonts f ON f.id=cf.font_id WHERE NOT is_hidden(f.path) GROUP BY cf.collection_id");
         using var r = c.ExecuteReader();
         var d = new Dictionary<long, int>();
         while (r.Read()) d[r.GetInt64(0)] = r.GetInt32(1);
@@ -202,7 +212,7 @@ public sealed class FontLibrary : IDisposable
 
     /// <summary>The distinct file paths of the fonts in a collection.</summary>
     public IReadOnlyList<string> CollectionPaths(long collectionId) =>
-        ColumnWith("SELECT DISTINCT path FROM fonts WHERE id IN (SELECT font_id FROM collection_fonts WHERE collection_id=$c)", ("$c", collectionId));
+        ColumnWith("SELECT DISTINCT path FROM fonts WHERE NOT is_hidden(path) AND id IN (SELECT font_id FROM collection_fonts WHERE collection_id=$c)", ("$c", collectionId));
 
     /// <summary>
     /// Files whose most recent use (across all faces in the file) is before the cutoff. Installed fonts are excluded,
@@ -212,7 +222,7 @@ public sealed class FontLibrary : IDisposable
     {
         using var c = Command("""
             SELECT path FROM fonts
-            WHERE NOT EXISTS(SELECT 1 FROM installs i WHERE i.source=fonts.path)
+            WHERE NOT EXISTS(SELECT 1 FROM installs i WHERE i.source=fonts.path) AND NOT is_hidden(path)
             GROUP BY path HAVING MAX(last_used) > 0 AND MAX(last_used) < $c
             ORDER BY path
             """, ("$c", cutoff.ToUnixTimeSeconds()));
@@ -331,7 +341,7 @@ public sealed class FontLibrary : IDisposable
 
     public IReadOnlyList<LibraryFont> Search(string? text = null, bool favoritesOnly = false, string? tag = null, long? collectionId = null, bool alwaysActiveOnly = false, bool installedOnly = false, bool recentOnly = false)
     {
-        var where = new List<string> { "1=1" };
+        var where = new List<string> { "NOT is_hidden(path)" };
         var args = new List<(string, object?)>();
         if (!string.IsNullOrWhiteSpace(text)) { where.Add("(family LIKE $q OR full_name LIKE $q)"); args.Add(("$q", $"%{text}%")); }
         if (favoritesOnly) where.Add("favorite=1");
@@ -461,12 +471,12 @@ public sealed class FontLibrary : IDisposable
     public void SetAlwaysActive(long fontId, bool value) => Run("UPDATE fonts SET always_active=$v WHERE id=$id", ("$v", value ? 1 : 0), ("$id", fontId));
 
     /// <summary>Distinct file paths of every always-active font (a .ttc counts once).</summary>
-    public IReadOnlyList<string> AlwaysActivePaths() => Column("SELECT DISTINCT path FROM fonts WHERE always_active=1");
+    public IReadOnlyList<string> AlwaysActivePaths() => Column("SELECT DISTINCT path FROM fonts WHERE always_active=1 AND NOT is_hidden(path)");
 
     public void SetFavorite(long fontId, bool value) => Run("UPDATE fonts SET favorite=$v WHERE id=$id", ("$v", value ? 1 : 0), ("$id", fontId));
     public void AddTag(long fontId, string tag) => Run("INSERT OR IGNORE INTO tags VALUES($id,$t)", ("$id", fontId), ("$t", tag.Trim()));
     public void RemoveTag(long fontId, string tag) => Run("DELETE FROM tags WHERE font_id=$id AND tag=$t", ("$id", fontId), ("$t", tag));
-    public IReadOnlyList<string> Tags() => Column("SELECT DISTINCT tag FROM tags ORDER BY tag");
+    public IReadOnlyList<string> Tags() => Column("SELECT DISTINCT t.tag FROM tags t JOIN fonts f ON f.id=t.font_id WHERE NOT is_hidden(f.path) ORDER BY t.tag");
     public IReadOnlyList<string> TagsFor(long fontId) => Column("SELECT tag FROM tags WHERE font_id=" + fontId + " ORDER BY tag");
 
     /// <summary>
@@ -543,7 +553,7 @@ public sealed class FontLibrary : IDisposable
 
     public IReadOnlyDictionary<string, int> TagCounts()
     {
-        using var c = Command("SELECT tag, COUNT(*) FROM tags GROUP BY tag");
+        using var c = Command("SELECT t.tag, COUNT(*) FROM tags t JOIN fonts f ON f.id=t.font_id WHERE NOT is_hidden(f.path) GROUP BY t.tag");
         using var r = c.ExecuteReader();
         var d = new Dictionary<string, int>();
         while (r.Read()) d[r.GetString(0)] = r.GetInt32(1);

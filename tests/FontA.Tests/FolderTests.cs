@@ -140,6 +140,43 @@ public class FolderTests
     }
 
     [Fact]
+    public void System_fonts_can_be_hidden_from_every_view_and_come_back_when_shown()
+    {
+        var root = Directory.CreateTempSubdirectory().FullName;
+        var saved = FolderGrouping.SystemFontFolders;
+        try
+        {
+            using var lib = NewLibrary(root, "Mine", "WinFonts");
+            File.Copy(Path.Combine(Fonts, "arial.ttf"), Path.Combine(root, "Mine", "arial.ttf"));
+            File.Copy(Path.Combine(Fonts, "verdana.ttf"), Path.Combine(root, "WinFonts", "verdana.ttf"));
+            lib.Scan(Path.Combine(root, "Mine")); lib.Scan(Path.Combine(root, "WinFonts"));
+            FolderGrouping.SystemFontFolders = new[] { Path.Combine(root, "WinFonts") };   // stand-in for C:\Windows\Fonts
+
+            var verdana = lib.Search("Verdana").Single();
+            lib.SetFavorite(verdana.Id, true); lib.AddTag(verdana.Id, "ui");
+            var work = lib.CreateCollection("Work"); lib.AddToCollection(work, verdana.Id);
+            Assert.Equal(2, lib.Counts().Total);                                              // nothing hidden yet
+
+            lib.HideSystemFonts = true;
+            Assert.Equal(new[] { "Arial" }, lib.Search().Select(f => f.Info.Family).ToArray());
+            Assert.Empty(lib.Search("Verdana"));
+            Assert.Equal(1, lib.Counts().Total);
+            Assert.Equal(0, lib.Counts().Favorites);
+            Assert.Single(lib.PathCounts());
+            Assert.Empty(lib.Tags());
+            Assert.False(lib.TagCounts().ContainsKey("ui"));
+            Assert.False(lib.CollectionCounts().ContainsKey(work));
+            Assert.Empty(lib.CollectionPaths(work));
+
+            lib.HideSystemFonts = false;                                                      // hiding deletes nothing
+            Assert.Equal(2, lib.Counts().Total);
+            Assert.Equal(1, lib.Counts().Favorites);
+            Assert.Equal(new[] { "ui" }, lib.Tags().ToArray());
+        }
+        finally { FolderGrouping.SystemFontFolders = saved; Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools(); Directory.Delete(root, true); }
+    }
+
+    [Fact]
     public void Recent_never_shows_more_than_the_limit_and_touching_paths_in_bulk_works()
     {
         var root = Directory.CreateTempSubdirectory().FullName;

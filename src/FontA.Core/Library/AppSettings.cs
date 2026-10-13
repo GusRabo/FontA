@@ -38,6 +38,9 @@ public sealed class AppSettings
         set => _lib.SetSetting("activation.msPerFont", Math.Clamp(value, 1, 10_000).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture));
     }
 
+    /// <summary>Show the fonts Windows itself installed (the Windows fonts folders). Off by default: FontA is for your own collections.</summary>
+    public bool ShowSystemFonts { get => Get("view.showSystemFonts", false); set => Set("view.showSystemFonts", value); }
+
     /// <summary>Use the light colour scheme instead of the default dark one.</summary>
     public bool LightTheme { get => Get("ui.lightTheme", false); set => Set("ui.lightTheme", value); }
 

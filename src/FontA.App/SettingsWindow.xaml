@@ -21,6 +21,15 @@
         <TextBlock Text="Watch folders for changes" VerticalAlignment="Center"/>
         <ToggleSwitch x:Name="WatchToggle" Grid.Column="1" OnContent="" OffContent="" MinWidth="0" Toggled="OnToggled"/>
       </Grid>
+      <Grid MinHeight="44">
+        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+        <StackPanel VerticalAlignment="Center">
+          <TextBlock Text="Show fonts installed in Windows"/>
+          <TextBlock Text="The fonts in C:\Windows\Fonts. Off by default: FontA is for your own font collections."
+                     Style="{StaticResource CaptionTextBlockStyle}" Opacity="0.7" TextWrapping="Wrap"/>
+        </StackPanel>
+        <ToggleSwitch x:Name="SystemFontsToggle" Grid.Column="1" OnContent="" OffContent="" MinWidth="0" Toggled="OnToggled"/>
+      </Grid>
 
       <Rectangle Height="1" Fill="{ThemeResource DividerStrokeColorDefaultBrush}" Margin="0,12"/>
 
