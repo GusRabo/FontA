@@ -166,5 +166,9 @@
         </StackPanel>
       </ScrollViewer>
     </Border>
+
+    <!-- the settings: shown here, in place of the font list, instead of in a window of their own -->
+    <Grid x:Name="SettingsHost" Grid.Column="1" Grid.ColumnSpan="2" Visibility="Collapsed"
+          Background="{ThemeResource ApplicationPageBackgroundThemeBrush}"/>
   </Grid>
 </Window>

@@ -4,22 +4,17 @@ using Microsoft.UI.Xaml.Controls;
 
 namespace FontA.App;
 
-public sealed partial class SettingsWindow : Window
+public sealed partial class SettingsPage : UserControl
 {
     private readonly MainWindow _main;
     private readonly AppSettings _settings;
     private bool _loading = true; // XAML and Load() raise change events; ignore them until the window is set up
 
-    public SettingsWindow(MainWindow main)
+    public SettingsPage(MainWindow main)
     {
         InitializeComponent();
         _main = main;
         _settings = main.Settings;
-        PlaceOver(main);
-        // Windows may put a new window at its own default spot when it first shows: place it again once it is up.
-        bool placed = false;
-        Activated += (_, _) => { if (!placed) { placed = true; PlaceOver(main); } };
-
         var version = typeof(App).Assembly.GetName().Version?.ToString(3) ?? "unknown";
         var how = _main.Updates.IsReady ? "installed" : "not installed (development build)";
         VersionText.Text = $"FontA {version}  ·  {how}  ·  library layout {FontLibrary.SchemaVersion}";
@@ -27,31 +22,8 @@ public sealed partial class SettingsWindow : Window
         LoadValues();
         RebuildFolders();
         main.FoldersChanged += RebuildFolders;
-        Closed += (_, _) => main.FoldersChanged -= RebuildFolders;
         _loading = false;
     }
-
-    /// <summary>
-    /// Opens centred over the main window, and stays above it: an owned window rides on top of its owner, and
-    /// minimises and restores with it, instead of drifting behind it.
-    /// </summary>
-    private void PlaceOver(Window owner)
-    {
-        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
-        var ownerHwnd = WinRT.Interop.WindowNative.GetWindowHandle(owner);
-        SetWindowLongPtr(hwnd, GWLP_HWNDPARENT, ownerHwnd);
-
-        double scale = GetDpiForWindow(ownerHwnd) / 96.0;
-        var area = owner.AppWindow.Size;
-        int w = Math.Min((int)(660 * scale), Math.Max(area.Width - 40, 400));
-        int h = Math.Min((int)(860 * scale), Math.Max(area.Height - 40, 400));
-        var at = owner.AppWindow.Position;
-        AppWindow.MoveAndResize(new Windows.Graphics.RectInt32(at.X + (area.Width - w) / 2, at.Y + (area.Height - h) / 2, w, h));
-    }
-
-    private const int GWLP_HWNDPARENT = -8;
-    [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")] private static extern IntPtr SetWindowLongPtr(IntPtr hwnd, int index, IntPtr value);
-    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern uint GetDpiForWindow(IntPtr hwnd);
 
     private void LoadValues()
     {
@@ -118,6 +90,8 @@ public sealed partial class SettingsWindow : Window
 
     private void OnCheckNow(object sender, RoutedEventArgs e) => _main.CheckUnusedNow();
 
+    private void OnBack(object sender, RoutedEventArgs e) => _main.CloseSettings();
+
     private async void OnAddFolder(object sender, RoutedEventArgs e) => await _main.AddFolderViaPickerAsync();
 
     private void RebuildFolders()
@@ -166,7 +140,7 @@ public sealed partial class SettingsWindow : Window
             PrimaryButtonText = "Remove",
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Close,
-            XamlRoot = Content.XamlRoot
+            XamlRoot = XamlRoot
         };
         if (await dialog.ShowAsync() == ContentDialogResult.Primary) _main.RemoveFolder(folder);
     }

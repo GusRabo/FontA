@@ -31,7 +31,7 @@ public sealed partial class MainWindow : Window
     private readonly StartupRegistration _startup = new();
     private readonly TrayIcon _tray;
     private readonly FolderWatcher _watcher;
-    private SettingsWindow? _settingsWindow;
+    private SettingsPage? _settingsPage;
     private bool _quitting;
     private readonly ActiveSessionJournal _journal;
     private System.Threading.Timer? _journalTimer;
@@ -70,7 +70,6 @@ public sealed partial class MainWindow : Window
         {
             _wheelHook?.Dispose();
             CancelQuietly(_scanCts); CancelQuietly(_pruneCts);
-            _settingsWindow?.Close();
             _watcher.Dispose(); _tray.Dispose();
             // An activation still running would keep adding fonts after the clean-up below has looked at what is active.
             CancelQuietly(_activationCts);
@@ -117,7 +116,7 @@ public sealed partial class MainWindow : Window
                 if (Directory.Exists(folder)) EnqueueScan(folder, quiet: false); // an unplugged drive is skipped, never "emptied"
     }
 
-    // ---- what the settings window talks to ----
+    // ---- what the settings page talks to ----
     /// <summary>
     /// Where the library, thumbnails and icon live. Debug builds honour FONTA_DATA_DIR so tests can use a throwaway
     /// library; release builds always use the per-user folder, so an environment variable can't redirect your data.
@@ -274,12 +273,23 @@ public sealed partial class MainWindow : Window
 
     private void OnOpenSettings(object s, RoutedEventArgs e)
     {
-        if (_settingsWindow == null)
+        // Settings show inside this window, in place of the font list. The page is built the first time it is wanted.
+        if (_settingsPage == null)
         {
-            _settingsWindow = new SettingsWindow(this);
-            _settingsWindow.Closed += (_, _) => _settingsWindow = null;
+            _settingsPage = new SettingsPage(this);
+            SettingsHost.Children.Add(_settingsPage);
         }
-        _settingsWindow.Activate();
+        if (SettingsOpen) { CloseSettings(); return; }       // the gear again goes back
+        SettingsHost.Visibility = Visibility.Visible;
+    }
+
+    public bool SettingsOpen => SettingsHost.Visibility == Visibility.Visible;
+
+    /// <summary>Back from the settings to the fonts.</summary>
+    public void CloseSettings()
+    {
+        SettingsHost.Visibility = Visibility.Collapsed;
+        FontGrid.Focus(FocusState.Pointer);          // keyboard focus returns to the list without drawing a focus frame
     }
 
     /// <summary>Checks every indexed file still exists, without blocking startup, and refreshes if anything changed.</summary>
@@ -295,7 +305,11 @@ public sealed partial class MainWindow : Window
         Refresh();
     }
 
-    private void OnSearchChanged(AutoSuggestBox s, AutoSuggestBoxTextChangedEventArgs e) => Refresh();
+    private void OnSearchChanged(AutoSuggestBox s, AutoSuggestBoxTextChangedEventArgs e)
+    {
+        if (SettingsOpen && e.Reason == AutoSuggestionBoxTextChangeReason.UserInput) CloseSettings();   // searching goes back to the fonts
+        Refresh();
+    }
     private void OnSampleChanged(object s, TextChangedEventArgs e) { foreach (var i in AllItems) i.Sample = SampleBox.Text; RenderPreview(); }
 
     private async void OnAddFolder(object s, RoutedEventArgs e) => await AddFolderViaPickerAsync();
@@ -595,7 +609,7 @@ public sealed partial class MainWindow : Window
     // ---- deactivate unused fonts ----
     private List<DeactivatedFont> _lastDeactivated = new();
 
-    /// <summary>Called by the settings window when the unused-fonts options change; turning it on starts the clocks.</summary>
+    /// <summary>Called by the settings page when the unused-fonts options change; turning it on starts the clocks.</summary>
     public void OnUnusedSettingsChanged()
     {
         if (_settings.UnusedEnabled) RunUnusedCheck(manual: false, refresh: true);
@@ -684,8 +698,9 @@ public sealed partial class MainWindow : Window
             new(Windows.System.VirtualKey.Number7, Ctrl, "Ctrl+7", "Show inactive fonts", () => SelectNav(NavKind.Inactive)),
             new(Windows.System.VirtualKey.F2, None, "F2", "Rename the selected collection",
                 () => { if (_nav.Kind != NavKind.Collection) return false; _ = RenameCollectionAsync(_nav.Id, _nav.Label); return true; }),
-            new(Vk, None, "Esc", "Cancel a running scan, otherwise clear the search", () =>
+            new(Vk, None, "Esc", "Close the settings, cancel a running scan, otherwise clear the search", () =>
             {
+                if (SettingsOpen) { CloseSettings(); return true; }
                 if (_scanCts != null) { OnCancelScan(this, null!); return true; }
                 if (string.IsNullOrEmpty(SearchBox.Text)) return false;
                 SearchBox.Text = "";

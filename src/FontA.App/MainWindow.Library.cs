@@ -425,6 +425,7 @@ public sealed partial class MainWindow
             return;
         }
         if (NavList.SelectedItem is not ListViewItem { Tag: NavEntry entry }) return;
+        if (SettingsOpen) CloseSettings();            // picking a view in the sidebar goes back to the fonts
         _nav = entry;
         Refresh();
     }
@@ -485,6 +486,7 @@ public sealed partial class MainWindow
             ScrollViewer? target = null;
             double notch;
             if (x < side) { target = Scroller(NavList); notch = 76; }
+            else if (SettingsOpen) { target = Scroller(SettingsHost); notch = 110; }     // the settings cover the font area
             else if (x < side + MainColumn.ActualWidth) { target = Scroller(FontGrid); notch = 110; }
             else return false;
             if (target == null) return false;
