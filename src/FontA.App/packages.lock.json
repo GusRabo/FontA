@@ -20,12 +20,9 @@
       },
       "System.Drawing.Common": {
         "type": "Direct",
-        "requested": "[8.0.10, )",
-        "resolved": "8.0.10",
-        "contentHash": "MdajRp3P+FOlThgY6FBjAqnmLiVl5t2yWEC/2AsDMqx1zYbJG3G5TnscFBQ4obqcaGqvN5UnhQHSFaJFG2HftQ==",
-        "dependencies": {
-          "Microsoft.Win32.SystemEvents": "8.0.0"
-        }
+        "requested": "[11.0.0, )",
+        "resolved": "11.0.0",
+        "contentHash": "oF5GQr2bzXFe3urMHTPRykuS+OcW2AJOZ2YGBcAqsctQ+2JE7l7Kxqup33ZpM3C2Yfdjurts2fNZL2qnHfY4JA=="
       },
       "Velopack": {
         "type": "Direct",
@@ -55,11 +52,6 @@
         "type": "Transitive",
         "resolved": "1.0.2651.64",
         "contentHash": "f5sc/vcAoTCTEW7Nqzp4galAuTRguZViw8ksn+Nx2uskEBPm0/ubzy6gVjvXS/P96jLS89C8T9I0hPc417xpNg=="
-      },
-      "Microsoft.Win32.SystemEvents": {
-        "type": "Transitive",
-        "resolved": "8.0.0",
-        "contentHash": "9opKRyOKMCi2xJ7Bj7kxtZ1r9vbzosMvRrdEhVhDz8j8MoBGgB+WmC94yH839NPH+BclAjtQ/pyagvi/8gDLkw=="
       },
       "SharpGen.Runtime": {
         "type": "Transitive",
@@ -194,11 +186,6 @@
         "type": "Transitive",
         "resolved": "1.0.2651.64",
         "contentHash": "f5sc/vcAoTCTEW7Nqzp4galAuTRguZViw8ksn+Nx2uskEBPm0/ubzy6gVjvXS/P96jLS89C8T9I0hPc417xpNg=="
-      },
-      "Microsoft.Win32.SystemEvents": {
-        "type": "Transitive",
-        "resolved": "8.0.0",
-        "contentHash": "9opKRyOKMCi2xJ7Bj7kxtZ1r9vbzosMvRrdEhVhDz8j8MoBGgB+WmC94yH839NPH+BclAjtQ/pyagvi/8gDLkw=="
       },
       "SQLitePCLRaw.lib.e_sqlite3": {
         "type": "Transitive",
